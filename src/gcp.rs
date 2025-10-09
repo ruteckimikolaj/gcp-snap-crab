@@ -4,7 +4,9 @@ use reqwest::Client;
 use serde_json::Value;
 use tokio::process::Command as AsyncCommand;
 
-use crate::types::{Backup, GcpApiResponse, Operation, RestoreRequest, SqlInstance};
+use crate::types::{
+    Backup, CreateBackupConfig, GcpApiResponse, Operation, RestoreRequest, SqlInstance,
+};
 
 pub struct GcpClient {
     client: Client,
@@ -189,6 +191,42 @@ impl GcpClient {
             Ok(operation_id.to_string())
         } else {
             Err(anyhow!("No operation ID returned from restore request"))
+        }
+    }
+
+    pub async fn create_backup(&self, backup_config: &CreateBackupConfig) -> Result<String> {
+        let token = self.get_access_token().await?;
+        let url = format!(
+            "https://sqladmin.googleapis.com/v1/projects/{}/instances/{}/backupRuns",
+            backup_config.project, backup_config.instance
+        );
+
+        let request_body = serde_json::json!({
+            "description": &backup_config.name
+        });
+
+        let response = self
+            .client
+            .post(&url)
+            .bearer_auth(&token)
+            .json(&request_body)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let error_text = response.text().await?;
+            return Err(anyhow!("Create backup operation failed: {}", error_text));
+        }
+
+        let result: Value = response.json().await?;
+
+        if let Some(name) = result.get("name").and_then(|n| n.as_str()) {
+            let operation_id = name.split('/').last().unwrap_or(name);
+            Ok(operation_id.to_string())
+        } else {
+            Err(anyhow!(
+                "No operation ID returned from create backup request"
+            ))
         }
     }
 }

@@ -65,7 +65,7 @@ pub struct GcpError {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AppState {
-    Welcome,
+    SelectingOperation,
     CheckingPrerequisites,
     SelectingSourceProject,
     SelectingSourceInstance,
@@ -75,12 +75,25 @@ pub enum AppState {
     ConfirmRestore,
     PerformingRestore,
     Error(String),
+
+    // States for creating a backup
+    SelectingProjectForBackup,
+    SelectingInstanceForBackup,
+    EnteringBackupName,
+    ConfirmCreateBackup,
+    PerformingCreateBackup,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum InputMode {
     Normal,
     Editing,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum OperationMode {
+    Restore,
+    CreateBackup,
 }
 
 #[derive(Debug, Clone)]
@@ -90,4 +103,12 @@ pub struct RestoreConfig {
     pub source_instance: String,
     pub target_project: String,
     pub target_instance: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateBackupConfig {
+    pub project: String,
+    pub instance: String,
+    pub name: String,
+    pub description: String,
 }

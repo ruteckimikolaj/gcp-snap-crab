@@ -63,10 +63,10 @@ pub async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> Re
         }
 
         if last_status_check.elapsed() >= status_check_interval {
-            if app.restore_result.is_some() {
+            if app.restore_flow.operation_id.is_some() {
                 let _ = app.check_restore_status().await;
             }
-            if app.backup_operation_id.is_some() {
+            if app.create_backup_flow.operation_id.is_some() {
                 let _ = app.check_backup_status().await;
             }
             last_status_check = Instant::now();
@@ -80,60 +80,65 @@ pub async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> Re
     Ok(())
 }
 
-async fn handle_normal_input(app: &mut App, key: KeyCode, modifiers: KeyModifiers) -> Result<()> {
+pub async fn handle_normal_input(app: &mut App, key: KeyCode, modifiers: KeyModifiers) -> Result<()> {
     match key {
         KeyCode::Char('q') => {
-            std::process::exit(0);
+            // In a test environment, we don't want to exit the process.
+            if !cfg!(test) {
+                std::process::exit(0);
+            }
         }
         KeyCode::Esc => {
-            if app.show_help {
+            if app.error.is_some() {
+                app.error = None;
+            } else if app.show_help {
                 app.toggle_help();
             } else if app.manual_input_active {
                 app.cancel_manual_input();
             } else {
                 match app.state {
                     AppState::ConfirmRestore => {
-                        app.target_instance = None;
-                        app.selected_instance_index = 0;
+                        app.restore_flow.target_instance = None;
+                        app.restore_flow.selected_instance_index = 0;
                         app.state = AppState::SelectingTargetInstance;
                     }
                     AppState::ConfirmCreateBackup => {
-                        app.create_backup_config = None;
+                        app.create_backup_flow.config = None;
                         app.state = AppState::EnteringBackupName;
                     }
                     AppState::SelectingSourceInstance => {
-                        app.source_project = None;
-                        app.sql_instances.clear();
-                        app.selected_instance_index = 0;
+                        app.restore_flow.source_project = None;
+                        app.restore_flow.instances.clear();
+                        app.restore_flow.selected_instance_index = 0;
                         app.state = AppState::SelectingSourceProject;
                     }
                     AppState::SelectingBackup => {
-                        app.source_instance = None;
-                        app.backups.clear();
-                        app.selected_backup_index = 0;
+                        app.restore_flow.source_instance = None;
+                        app.restore_flow.backups.clear();
+                        app.restore_flow.selected_backup_index = 0;
                         app.state = AppState::SelectingSourceInstance;
                     }
                     AppState::SelectingTargetProject => {
-                        app.selected_backup = None;
+                        app.restore_flow.selected_backup = None;
                         app.state = AppState::SelectingBackup;
                     }
                     AppState::SelectingTargetInstance => {
-                        app.target_project = None;
-                        app.sql_instances.clear();
-                        app.selected_instance_index = 0;
+                        app.restore_flow.target_project = None;
+                        app.restore_flow.instances.clear();
+                        app.restore_flow.selected_instance_index = 0;
                         app.state = AppState::SelectingTargetProject;
                     }
                     AppState::PerformingRestore => {
                         app.state = AppState::SelectingTargetInstance;
                     }
                     AppState::SelectingInstanceForBackup => {
-                        app.source_project = None;
-                        app.sql_instances.clear();
-                        app.selected_instance_index = 0;
+                        app.create_backup_flow.project = None;
+                        app.create_backup_flow.instances.clear();
+                        app.create_backup_flow.selected_instance_index = 0;
                         app.state = AppState::SelectingProjectForBackup;
                     }
                     AppState::EnteringBackupName => {
-                        app.source_instance = None;
+                        app.create_backup_flow.instance = None;
                         app.state = AppState::SelectingInstanceForBackup;
                     }
                     AppState::PerformingCreateBackup => {
@@ -170,50 +175,45 @@ async fn handle_normal_input(app: &mut App, key: KeyCode, modifiers: KeyModifier
         },
         KeyCode::Char('r') => {
             match app.state {
-                AppState::SelectingSourceInstance
-                | AppState::SelectingTargetInstance
-                | AppState::SelectingInstanceForBackup => {
-                    if let Some(project) = &app.source_project.clone() {
+                AppState::SelectingSourceInstance | AppState::SelectingTargetInstance => {
+                    if let Some(project) = &app.restore_flow.source_project.clone() {
+                        app.load_instances(project).await?;
+                    }
+                }
+                AppState::SelectingInstanceForBackup => {
+                    if let Some(project) = &app.create_backup_flow.project.clone() {
                         app.load_instances(project).await?;
                     }
                 }
                 AppState::SelectingBackup => {
-                    if let (Some(project), Some(instance)) =
-                        (&app.source_project.clone(), &app.source_instance.clone())
-                    {
+                    if let (Some(project), Some(instance)) = (
+                        &app.restore_flow.source_project.clone(),
+                        &app.restore_flow.source_instance.clone(),
+                    ) {
                         app.load_backups(project, instance).await?;
                     }
                 }
                 _ => {}
             }
-            if app.restore_result.is_some() {
+            if app.restore_flow.operation_id.is_some() {
                 app.check_restore_status().await?;
             }
-            if app.backup_operation_id.is_some() {
+            if app.create_backup_flow.operation_id.is_some() {
                 app.check_backup_status().await?;
             }
         }
         KeyCode::Char('n') => {
             app.state = AppState::SelectingOperation;
             app.operation_mode = None;
-            app.source_project = None;
-            app.source_instance = None;
-            app.target_project = None;
-            app.target_instance = None;
-            app.selected_backup = None;
-            app.restore_config = None;
-            app.restore_result = None;
-            app.restore_status = None;
-            app.create_backup_config = None;
-            app.backup_operation_id = None;
-            app.backup_operation_status = None;
+            app.restore_flow = crate::state::restore_flow::RestoreFlow::new();
+            app.create_backup_flow = crate::state::create_backup_flow::CreateBackupFlow::new();
         }
         _ => {}
     }
     Ok(())
 }
 
-async fn handle_edit_input(app: &mut App, key: KeyCode) -> Result<()> {
+pub async fn handle_edit_input(app: &mut App, key: KeyCode) -> Result<()> {
     match key {
         KeyCode::Enter => {
             if app.manual_input_active {
@@ -272,6 +272,39 @@ fn ui(f: &mut Frame, app: &mut App) {
     }
     if matches!(app.state, AppState::ConfirmCreateBackup) {
         render_create_backup_warning_popup(f, app);
+    }
+    if app.error.is_some() {
+        render_error_popup(f, app);
+    }
+}
+
+fn render_error_popup(f: &mut Frame, app: &mut App) {
+    if let Some(error_msg) = &app.error {
+        let popup_area = centered_rect(60, 25, f.area());
+        f.render_widget(Clear, popup_area); //this clears the background
+
+        let error_text = vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                "❌ ERROR ❌",
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(error_msg.as_str()),
+        ];
+
+        let block = Block::default()
+            .title("Error")
+            .borders(Borders::ALL)
+            .border_type(BorderType::Double)
+            .style(Style::default().fg(Color::Red));
+
+        let paragraph = Paragraph::new(error_text)
+            .block(block)
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: true });
+
+        f.render_widget(paragraph, popup_area);
     }
 }
 
@@ -364,13 +397,13 @@ fn render_create_backup_layout(f: &mut Frame, area: Rect, app: &mut App) {
 fn render_backup_project_selection(f: &mut Frame, area: Rect, app: &mut App) {
     let project_style = if matches!(app.state, AppState::SelectingProjectForBackup) {
         Style::default().fg(ACCENT_COLOR)
-    } else if app.source_project.is_some() {
+    } else if app.create_backup_flow.project.is_some() {
         Style::default().fg(SUCCESS_COLOR)
     } else {
         Style::default().fg(BORDER_COLOR)
     };
 
-    let project_content = if let Some(project) = &app.source_project {
+    let project_content = if let Some(project) = &app.create_backup_flow.project {
         format!("✓ {}", project)
     } else if matches!(app.state, AppState::SelectingProjectForBackup) {
         "→ Press Enter to select...".to_string()
@@ -395,27 +428,27 @@ fn render_backup_project_selection(f: &mut Frame, area: Rect, app: &mut App) {
 
 fn render_backup_instance_selection(f: &mut Frame, area: Rect, app: &mut App) {
     if matches!(app.state, AppState::SelectingInstanceForBackup)
-        && !app.sql_instances.is_empty()
-        && app.source_instance.is_none()
+        && !app.create_backup_flow.instances.is_empty()
+        && app.create_backup_flow.instance.is_none()
     {
         render_instance_list(f, area, app, "Instance to Backup");
     } else {
-        let instance_style =
-            if matches!(app.state, AppState::SelectingInstanceForBackup) && app.source_instance.is_none()
-            {
-                Style::default().fg(ACCENT_COLOR)
-            } else if app.source_instance.is_some() {
-                Style::default().fg(SUCCESS_COLOR)
-            } else {
-                Style::default().fg(BORDER_COLOR)
-            };
+        let instance_style = if matches!(app.state, AppState::SelectingInstanceForBackup)
+            && app.create_backup_flow.instance.is_none()
+        {
+            Style::default().fg(ACCENT_COLOR)
+        } else if app.create_backup_flow.instance.is_some() {
+            Style::default().fg(SUCCESS_COLOR)
+        } else {
+            Style::default().fg(BORDER_COLOR)
+        };
 
-        let instance_content = if let Some(instance) = &app.source_instance {
+        let instance_content = if let Some(instance) = &app.create_backup_flow.instance {
             format!("✓ {}", instance)
         } else if matches!(app.state, AppState::SelectingInstanceForBackup) {
             if app.loading {
                 "→ Loading instances...".to_string()
-            } else if app.sql_instances.is_empty() {
+            } else if app.create_backup_flow.instances.is_empty() {
                 "→ No instances found".to_string()
             } else {
                 "→ Select instance...".to_string()
@@ -443,13 +476,13 @@ fn render_backup_instance_selection(f: &mut Frame, area: Rect, app: &mut App) {
 fn render_backup_name_input(f: &mut Frame, area: Rect, app: &mut App) {
     let name_style = if matches!(app.state, AppState::EnteringBackupName) {
         Style::default().fg(ACCENT_COLOR)
-    } else if app.create_backup_config.is_some() {
+    } else if app.create_backup_flow.config.is_some() {
         Style::default().fg(SUCCESS_COLOR)
     } else {
         Style::default().fg(BORDER_COLOR)
     };
 
-    let name_content = if let Some(config) = &app.create_backup_config {
+    let name_content = if let Some(config) = &app.create_backup_flow.config {
         format!("✓ {}", config.name)
     } else if matches!(app.state, AppState::EnteringBackupName) {
         "→ Press Enter to name backup...".to_string()
@@ -473,29 +506,29 @@ fn render_backup_name_input(f: &mut Frame, area: Rect, app: &mut App) {
 }
 
 fn render_backup_status(f: &mut Frame, area: Rect, app: &mut App) {
-    let status_content = if let Some(_operation_id) = &app.backup_operation_id {
-        match app.backup_operation_status.as_deref() {
+    let status_content = if let Some(_operation_id) = &app.create_backup_flow.operation_id {
+        match app.create_backup_flow.status.as_deref() {
             Some("DONE") => "✅ Backup created successfully!",
             Some("RUNNING") => "🔄 Backup in progress...",
             Some("PENDING") => "⏳ Backup is pending...",
             Some("FAILED") | Some("ERROR") => "❌ Backup failed!",
             _ => "📊 Checking backup status...",
         }
-    } else if app.create_backup_config.is_some() {
+    } else if app.create_backup_flow.config.is_some() {
         "✅ Ready to create backup!\nPress Enter to confirm."
     } else {
         "Complete previous steps."
     };
 
-    let status_style = if let Some(_) = &app.backup_operation_id {
-        match app.backup_operation_status.as_deref() {
+    let status_style = if let Some(_) = &app.create_backup_flow.operation_id {
+        match app.create_backup_flow.status.as_deref() {
             Some("DONE") => Style::default().fg(SUCCESS_COLOR),
             Some("RUNNING") => Style::default().fg(WARNING_COLOR),
             Some("PENDING") => Style::default().fg(ACCENT_COLOR),
             Some("FAILED") | Some("ERROR") => Style::default().fg(Color::Red),
             _ => Style::default().fg(WARNING_COLOR),
         }
-    } else if app.create_backup_config.is_some() {
+    } else if app.create_backup_flow.config.is_some() {
         Style::default().fg(SUCCESS_COLOR)
     } else {
         Style::default().fg(BORDER_COLOR)
@@ -534,22 +567,22 @@ fn render_source_section(f: &mut Frame, area: Rect, app: &mut App) {
     let source_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(8),   // Project
-            Constraint::Length(8),   // Instance
-            Constraint::Min(0),      // Backup
+            Constraint::Length(8), // Project
+            Constraint::Length(8), // Instance
+            Constraint::Min(0),    // Backup
         ])
         .split(area);
 
     // Source Project
     let project_style = if matches!(app.state, AppState::SelectingSourceProject) {
         Style::default().fg(ACCENT_COLOR)
-    } else if app.source_project.is_some() {
+    } else if app.restore_flow.source_project.is_some() {
         Style::default().fg(SUCCESS_COLOR)
     } else {
         Style::default().fg(BORDER_COLOR)
     };
 
-    let project_content = if let Some(project) = &app.source_project {
+    let project_content = if let Some(project) = &app.restore_flow.source_project {
         format!("✓ {}", project)
     } else if matches!(app.state, AppState::SelectingSourceProject) {
         "→ Press Enter to select...".to_string()
@@ -564,7 +597,7 @@ fn render_source_section(f: &mut Frame, area: Rect, app: &mut App) {
                     .title("Source Project")
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
-                    .style(project_style)
+                    .style(project_style),
             )
             .alignment(Alignment::Center)
             .wrap(Wrap { trim: true }),
@@ -572,23 +605,28 @@ fn render_source_section(f: &mut Frame, area: Rect, app: &mut App) {
     );
 
     // Source Instance
-    if matches!(app.state, AppState::SelectingSourceInstance) && !app.sql_instances.is_empty() && app.source_instance.is_none() {
+    if matches!(app.state, AppState::SelectingSourceInstance)
+        && !app.restore_flow.instances.is_empty()
+        && app.restore_flow.source_instance.is_none()
+    {
         render_instance_list(f, source_chunks[1], app, "Source Instance");
     } else {
-        let instance_style = if matches!(app.state, AppState::SelectingSourceInstance) && app.source_instance.is_none() {
+        let instance_style = if matches!(app.state, AppState::SelectingSourceInstance)
+            && app.restore_flow.source_instance.is_none()
+        {
             Style::default().fg(ACCENT_COLOR)
-        } else if app.source_instance.is_some() {
+        } else if app.restore_flow.source_instance.is_some() {
             Style::default().fg(SUCCESS_COLOR)
         } else {
             Style::default().fg(BORDER_COLOR)
         };
 
-        let instance_content = if let Some(instance) = &app.source_instance {
+        let instance_content = if let Some(instance) = &app.restore_flow.source_instance {
             format!("✓ {}", instance)
         } else if matches!(app.state, AppState::SelectingSourceInstance) {
             if app.loading {
                 "→ Loading instances...".to_string()
-            } else if app.sql_instances.is_empty() {
+            } else if app.restore_flow.instances.is_empty() {
                 "→ No instances found".to_string()
             } else {
                 "→ Select instance...".to_string()
@@ -604,7 +642,7 @@ fn render_source_section(f: &mut Frame, area: Rect, app: &mut App) {
                         .title("Source Instance")
                         .borders(Borders::ALL)
                         .border_type(BorderType::Rounded)
-                        .style(instance_style)
+                        .style(instance_style),
                 )
                 .alignment(Alignment::Center)
                 .wrap(Wrap { trim: true }),
@@ -613,26 +651,31 @@ fn render_source_section(f: &mut Frame, area: Rect, app: &mut App) {
     }
 
     // Source Backup
-    if matches!(app.state, AppState::SelectingBackup) && !app.backups.is_empty() && app.selected_backup.is_none() {
+    if matches!(app.state, AppState::SelectingBackup)
+        && !app.restore_flow.backups.is_empty()
+        && app.restore_flow.selected_backup.is_none()
+    {
         render_backup_list(f, source_chunks[2], app);
     } else {
-        let backup_style = if matches!(app.state, AppState::SelectingBackup) && app.selected_backup.is_none() {
+        let backup_style = if matches!(app.state, AppState::SelectingBackup)
+            && app.restore_flow.selected_backup.is_none()
+        {
             Style::default().fg(ACCENT_COLOR)
-        } else if app.selected_backup.is_some() {
+        } else if app.restore_flow.selected_backup.is_some() {
             Style::default().fg(SUCCESS_COLOR)
         } else {
             Style::default().fg(BORDER_COLOR)
         };
 
-        let backup_content = if let Some(backup) = &app.selected_backup {
+        let backup_content = if let Some(backup) = &app.restore_flow.selected_backup {
             format!("✓ {}", backup)
         } else if matches!(app.state, AppState::SelectingBackup) {
             if app.loading {
                 "→ Loading backups...".to_string()
-            } else if app.backups.is_empty() {
+            } else if app.restore_flow.backups.is_empty() {
                 "→ No backups found".to_string()
             } else {
-                format!("→ Choose from {} backups", app.backups.len())
+                format!("→ Choose from {} backups", app.restore_flow.backups.len())
             }
         } else {
             "Pending...".to_string()
@@ -645,7 +688,7 @@ fn render_source_section(f: &mut Frame, area: Rect, app: &mut App) {
                         .title("Source Backup")
                         .borders(Borders::ALL)
                         .border_type(BorderType::Rounded)
-                        .style(backup_style)
+                        .style(backup_style),
                 )
                 .alignment(Alignment::Center)
                 .wrap(Wrap { trim: true }),
@@ -655,13 +698,26 @@ fn render_source_section(f: &mut Frame, area: Rect, app: &mut App) {
 }
 
 fn render_instance_list(f: &mut Frame, area: Rect, app: &mut App, title: &str) {
-    let items: Vec<ListItem> = app
-        .sql_instances
+    let (instances, selected_index) = match app.operation_mode {
+        Some(OperationMode::Restore) => (
+            &app.restore_flow.instances,
+            app.restore_flow.selected_instance_index,
+        ),
+        Some(OperationMode::CreateBackup) => (
+            &app.create_backup_flow.instances,
+            app.create_backup_flow.selected_instance_index,
+        ),
+        None => (&app.restore_flow.instances, 0), // Default or error case
+    };
+
+    let items: Vec<ListItem> = instances
         .iter()
         .enumerate()
         .map(|(i, instance)| {
-            let style = if i == app.selected_instance_index {
-                Style::default().fg(ACCENT_COLOR).add_modifier(Modifier::BOLD)
+            let style = if i == selected_index {
+                Style::default()
+                    .fg(ACCENT_COLOR)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(BASE_FG)
             };
@@ -675,31 +731,39 @@ fn render_instance_list(f: &mut Frame, area: Rect, app: &mut App, title: &str) {
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
                 .title(title)
-                .style(Style::default().fg(ACCENT_COLOR))
+                .style(Style::default().fg(ACCENT_COLOR)),
         )
-        .highlight_style(Style::default().bg(HIGHLIGHT_BG).add_modifier(Modifier::BOLD))
+        .highlight_style(
+            Style::default()
+                .bg(HIGHLIGHT_BG)
+                .add_modifier(Modifier::BOLD),
+        )
         .highlight_symbol("► ");
 
     let mut state = ListState::default();
-    state.select(Some(app.selected_instance_index));
+    state.select(Some(selected_index));
 
     f.render_stateful_widget(list, area, &mut state);
 }
 
 fn render_backup_list(f: &mut Frame, area: Rect, app: &mut App) {
     let items: Vec<ListItem> = app
+        .restore_flow
         .backups
         .iter()
         .enumerate()
         .map(|(i, backup)| {
-            let style = if i == app.selected_backup_index {
-                Style::default().fg(ACCENT_COLOR).add_modifier(Modifier::BOLD)
+            let style = if i == app.restore_flow.selected_backup_index {
+                Style::default()
+                    .fg(ACCENT_COLOR)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(BASE_FG)
             };
 
             // Format the date (without time)
-            let date_str = backup.start_time
+            let date_str = backup
+                .start_time
                 .map(|t| t.format("%Y-%m-%d").to_string())
                 .unwrap_or_else(|| "Unknown".to_string());
 
@@ -716,13 +780,17 @@ fn render_backup_list(f: &mut Frame, area: Rect, app: &mut App) {
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
                 .title("Source Backup")
-                .style(Style::default().fg(ACCENT_COLOR))
+                .style(Style::default().fg(ACCENT_COLOR)),
         )
-        .highlight_style(Style::default().bg(HIGHLIGHT_BG).add_modifier(Modifier::BOLD))
+        .highlight_style(
+            Style::default()
+                .bg(HIGHLIGHT_BG)
+                .add_modifier(Modifier::BOLD),
+        )
         .highlight_symbol("► ");
 
     let mut state = ListState::default();
-    state.select(Some(app.selected_backup_index));
+    state.select(Some(app.restore_flow.selected_backup_index));
 
     f.render_stateful_widget(list, area, &mut state);
 }
@@ -731,22 +799,22 @@ fn render_target_section(f: &mut Frame, area: Rect, app: &mut App) {
     let target_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(8),   // Project
-            Constraint::Length(8),   // Instance
-            Constraint::Min(0),      // Status/Info
+            Constraint::Length(8), // Project
+            Constraint::Length(8), // Instance
+            Constraint::Min(0),    // Status/Info
         ])
         .split(area);
 
     // Target Project
     let project_style = if matches!(app.state, AppState::SelectingTargetProject) {
         Style::default().fg(ACCENT_COLOR)
-    } else if app.target_project.is_some() {
+    } else if app.restore_flow.target_project.is_some() {
         Style::default().fg(SUCCESS_COLOR)
     } else {
         Style::default().fg(BORDER_COLOR)
     };
 
-    let project_content = if let Some(project) = &app.target_project {
+    let project_content = if let Some(project) = &app.restore_flow.target_project {
         format!("✓ {}", project)
     } else if matches!(app.state, AppState::SelectingTargetProject) {
         "→ Press Enter to select...".to_string()
@@ -761,7 +829,7 @@ fn render_target_section(f: &mut Frame, area: Rect, app: &mut App) {
                     .title("Target Project")
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
-                    .style(project_style)
+                    .style(project_style),
             )
             .alignment(Alignment::Center)
             .wrap(Wrap { trim: true }),
@@ -769,23 +837,28 @@ fn render_target_section(f: &mut Frame, area: Rect, app: &mut App) {
     );
 
     // Target Instance
-    if matches!(app.state, AppState::SelectingTargetInstance) && !app.sql_instances.is_empty() && app.target_instance.is_none() {
+    if matches!(app.state, AppState::SelectingTargetInstance)
+        && !app.restore_flow.instances.is_empty()
+        && app.restore_flow.target_instance.is_none()
+    {
         render_instance_list(f, target_chunks[1], app, "Target Instance");
     } else {
-        let instance_style = if matches!(app.state, AppState::SelectingTargetInstance) && app.target_instance.is_none() {
+        let instance_style = if matches!(app.state, AppState::SelectingTargetInstance)
+            && app.restore_flow.target_instance.is_none()
+        {
             Style::default().fg(ACCENT_COLOR)
-        } else if app.target_instance.is_some() {
+        } else if app.restore_flow.target_instance.is_some() {
             Style::default().fg(SUCCESS_COLOR)
         } else {
             Style::default().fg(BORDER_COLOR)
         };
 
-        let instance_content = if let Some(instance) = &app.target_instance {
+        let instance_content = if let Some(instance) = &app.restore_flow.target_instance {
             format!("✓ {}", instance)
         } else if matches!(app.state, AppState::SelectingTargetInstance) {
             if app.loading {
                 "→ Loading instances...".to_string()
-            } else if app.sql_instances.is_empty() {
+            } else if app.restore_flow.instances.is_empty() {
                 "→ No instances found".to_string()
             } else {
                 "→ Select instance...".to_string()
@@ -801,7 +874,7 @@ fn render_target_section(f: &mut Frame, area: Rect, app: &mut App) {
                         .title("Target Instance")
                         .borders(Borders::ALL)
                         .border_type(BorderType::Rounded)
-                        .style(instance_style)
+                        .style(instance_style),
                 )
                 .alignment(Alignment::Center)
                 .wrap(Wrap { trim: true }),
@@ -810,29 +883,35 @@ fn render_target_section(f: &mut Frame, area: Rect, app: &mut App) {
     }
 
     // Status/Info section - Now shows restore progress with actual status
-    let status_content = if let Some(_operation_id) = &app.restore_result {
-        match app.restore_status.as_deref() {
+    let status_content = if let Some(_operation_id) = &app.restore_flow.operation_id {
+        match app.restore_flow.status.as_deref() {
             Some("DONE") => "✅ Restore completed successfully!\nBackup has been applied.",
-            Some("RUNNING") => "🔄 Restore in progress...\nPlease wait, this may take several minutes.",
+            Some("RUNNING") => {
+                "🔄 Restore in progress...\nPlease wait, this may take several minutes."
+            }
             Some("PENDING") => "⏳ Restore is pending...\nOperation is queued for execution.",
             Some("FAILED") | Some("ERROR") => "❌ Restore failed!\nCheck logs for details.",
             _ => "📊 Checking restore status...\nMonitoring progress...",
         }
-    } else if app.target_instance.is_some() && app.selected_backup.is_some() {
+    } else if app.restore_flow.target_instance.is_some()
+        && app.restore_flow.selected_backup.is_some()
+    {
         "✅ Ready to restore!\nPress Enter to confirm."
     } else {
         "Complete source\nselection first."
     };
 
-    let status_style = if let Some(_) = &app.restore_result {
-        match app.restore_status.as_deref() {
+    let status_style = if let Some(_) = &app.restore_flow.operation_id {
+        match app.restore_flow.status.as_deref() {
             Some("DONE") => Style::default().fg(SUCCESS_COLOR),
             Some("RUNNING") => Style::default().fg(WARNING_COLOR),
             Some("PENDING") => Style::default().fg(ACCENT_COLOR),
             Some("FAILED") | Some("ERROR") => Style::default().fg(Color::Red),
             _ => Style::default().fg(WARNING_COLOR),
         }
-    } else if app.target_instance.is_some() && app.selected_backup.is_some() {
+    } else if app.restore_flow.target_instance.is_some()
+        && app.restore_flow.selected_backup.is_some()
+    {
         Style::default().fg(SUCCESS_COLOR)
     } else {
         Style::default().fg(BORDER_COLOR)
@@ -845,7 +924,7 @@ fn render_target_section(f: &mut Frame, area: Rect, app: &mut App) {
                     .title("Restore Status")
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
-                    .style(status_style)
+                    .style(status_style),
             )
             .alignment(Alignment::Center)
             .wrap(Wrap { trim: true }),
@@ -863,7 +942,12 @@ fn render_welcome(f: &mut Frame, area: Rect) {
 
     let welcome_text = vec![
         Line::from(""),
-        Line::from(Span::styled("GCP SQL Backup Restore Tool", Style::default().fg(ACCENT_COLOR).add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled(
+            "GCP SQL Backup Restore Tool",
+            Style::default()
+                .fg(ACCENT_COLOR)
+                .add_modifier(Modifier::BOLD),
+        )),
         Line::from(""),
         Line::from("This tool helps you restore SQL backups between GCP projects."),
         Line::from(""),
@@ -878,8 +962,14 @@ fn render_welcome(f: &mut Frame, area: Rect) {
         Line::from("  • Use ESC to go back to previous steps"),
         Line::from("  • Use Q to quit the application"),
         Line::from(""),
-        Line::from(Span::styled("Press 'p' to start with project selection", Style::default().fg(WARNING_COLOR))),
-        Line::from(Span::styled("Press 'h' for detailed help", Style::default().fg(BORDER_COLOR))),
+        Line::from(Span::styled(
+            "Press 'p' to start with project selection",
+            Style::default().fg(WARNING_COLOR),
+        )),
+        Line::from(Span::styled(
+            "Press 'h' for detailed help",
+            Style::default().fg(BORDER_COLOR),
+        )),
     ];
 
     let paragraph = Paragraph::new(welcome_text)
@@ -893,7 +983,12 @@ fn render_welcome(f: &mut Frame, area: Rect) {
 fn render_loading(f: &mut Frame, area: Rect, message: &str) {
     let loading_text = vec![
         Line::from(""),
-        Line::from(Span::styled("⏳ Loading...", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled(
+            "⏳ Loading...",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )),
         Line::from(""),
         Line::from(message),
         Line::from(""),
@@ -917,12 +1012,20 @@ fn render_project_selection(f: &mut Frame, area: Rect, app: &App, title: &str) {
 
     let content = vec![
         Line::from(""),
-        Line::from(Span::styled("Manual Project ID Entry", Style::default().fg(ACCENT_COLOR).add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled(
+            "Manual Project ID Entry",
+            Style::default()
+                .fg(ACCENT_COLOR)
+                .add_modifier(Modifier::BOLD),
+        )),
         Line::from(""),
         Line::from("Enter your GCP project ID manually"),
         Line::from("for security and flexibility."),
         Line::from(""),
-        Line::from(Span::styled("Press [Enter] to open input", Style::default().fg(INPUT_TEXT))),
+        Line::from(Span::styled(
+            "Press [Enter] to open input",
+            Style::default().fg(INPUT_TEXT),
+        )),
     ];
 
     if !app.remembered_projects.is_empty() {
@@ -932,8 +1035,9 @@ fn render_project_selection(f: &mut Frame, area: Rect, app: &App, title: &str) {
             vec![
                 Line::from(""),
                 Line::from(Span::styled(recent_text, Style::default().fg(BORDER_COLOR))),
-            ]
-        ].concat();
+            ],
+        ]
+        .concat();
 
         let paragraph = Paragraph::new(content_with_recent)
             .block(block)
@@ -952,11 +1056,17 @@ fn render_project_selection(f: &mut Frame, area: Rect, app: &App, title: &str) {
 fn render_error(f: &mut Frame, area: Rect, error_msg: &str) {
     let error_text = vec![
         Line::from(""),
-        Line::from(Span::styled("❌ ERROR", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled(
+            "❌ ERROR",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        )),
         Line::from(""),
         Line::from(error_msg),
         Line::from(""),
-        Line::from(Span::styled("Press 'q' to exit", Style::default().fg(Color::Yellow))),
+        Line::from(Span::styled(
+            "Press 'q' to exit",
+            Style::default().fg(Color::Yellow),
+        )),
     ];
 
     let error = Paragraph::new(error_text)
@@ -974,7 +1084,9 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
         match app.state {
             AppState::SelectingOperation => " [↑/↓] Navigate | [Enter] Select | [h] Help | [q] Quit ",
             _ => {
-                if app.restore_result.is_some() || app.backup_operation_id.is_some() {
+                if app.restore_flow.operation_id.is_some()
+                    || app.create_backup_flow.operation_id.is_some()
+                {
                     " [↑/↓] Navigate | [Enter] Select | [Esc] Back | [r] Refresh | [n] New | [h] Help | [q] Quit "
                 } else {
                     " [↑/↓] Navigate | [Enter] Select | [Esc] Back | [r] Refresh | [h] Help | [q] Quit "
@@ -999,7 +1111,7 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_restore_warning_popup(f: &mut Frame, app: &App) {
-    if let Some(config) = &app.restore_config {
+    if let Some(config) = &app.restore_flow.config {
         let popup_area = centered_rect(85, 60, f.area());
         f.render_widget(Clear, popup_area);
 
@@ -1061,14 +1173,18 @@ fn render_restore_warning_popup(f: &mut Frame, app: &App) {
             Line::from(vec![
                 Span::styled(
                     "📂 Source: ",
-                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(&source_text, Style::default().fg(Color::White)),
             ]),
             Line::from(vec![
                 Span::styled(
                     "💾 Backup: ",
-                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(&config.backup_id, Style::default().fg(Color::White)),
             ]),
@@ -1132,7 +1248,9 @@ fn render_restore_warning_popup(f: &mut Frame, app: &App) {
             Line::from(vec![
                 Span::styled(
                     "[Enter] ",
-                    Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
                     "PROCEED WITH RESTORATION  ",
@@ -1156,7 +1274,7 @@ fn render_restore_warning_popup(f: &mut Frame, app: &App) {
 }
 
 fn render_create_backup_warning_popup(f: &mut Frame, app: &App) {
-    if let Some(config) = &app.create_backup_config {
+    if let Some(config) = &app.create_backup_flow.config {
         let popup_area = centered_rect(85, 60, f.area());
         f.render_widget(Clear, popup_area);
 
@@ -1209,14 +1327,18 @@ fn render_create_backup_warning_popup(f: &mut Frame, app: &App) {
             Line::from(vec![
                 Span::styled(
                     "📂 Project: ",
-                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(&config.project, Style::default().fg(Color::White)),
             ]),
             Line::from(vec![
                 Span::styled(
                     "💾 Instance: ",
-                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(&config.instance, Style::default().fg(Color::White)),
             ]),
@@ -1248,7 +1370,9 @@ fn render_create_backup_warning_popup(f: &mut Frame, app: &App) {
             Line::from(vec![
                 Span::styled(
                     "[Enter] ",
-                    Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled("CREATE BACKUP  ", Style::default().fg(Color::White)),
                 Span::styled(
@@ -1401,10 +1525,7 @@ fn render_manual_input_popup(f: &mut Frame, app: &App) {
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(0),
-        ])
+        .constraints([Constraint::Length(3), Constraint::Min(0)])
         .split(popup_area);
 
     let input = Paragraph::new(app.manual_input_buffer.as_str())
@@ -1459,3 +1580,74 @@ fn render_manual_input_popup(f: &mut Frame, app: &App) {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::App;
+    use crate::gcp::MockGcpClientTrait;
+    use crate::types::{AppState, InputMode};
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    fn create_test_app() -> App {
+        let mock_gcp_client = MockGcpClientTrait::new();
+        App::new(Box::new(mock_gcp_client), false)
+    }
+
+    #[tokio::test]
+    async fn test_handle_normal_input_toggle_help() {
+        let mut app = create_test_app();
+        assert!(!app.show_help);
+
+        handle_normal_input(&mut app, KeyCode::Char('h'), KeyModifiers::NONE)
+            .await
+            .unwrap();
+        assert!(app.show_help);
+
+        handle_normal_input(&mut app, KeyCode::Char('h'), KeyModifiers::NONE)
+            .await
+            .unwrap();
+        assert!(!app.show_help);
+    }
+
+    #[tokio::test]
+    async fn test_handle_normal_input_escape_from_manual_input() {
+        let mut app = create_test_app();
+        app.start_manual_input("test");
+        assert!(app.manual_input_active);
+
+        handle_normal_input(&mut app, KeyCode::Esc, KeyModifiers::NONE)
+            .await
+            .unwrap();
+        assert!(!app.manual_input_active);
+    }
+
+    #[tokio::test]
+    async fn test_handle_edit_input_char_and_backspace() {
+        let mut app = create_test_app();
+        app.start_manual_input("test");
+
+        handle_edit_input(&mut app, KeyCode::Char('a')).await.unwrap();
+        assert_eq!(app.manual_input_buffer, "a");
+
+        handle_edit_input(&mut app, KeyCode::Char('b')).await.unwrap();
+        assert_eq!(app.manual_input_buffer, "ab");
+
+        handle_edit_input(&mut app, KeyCode::Backspace).await.unwrap();
+        assert_eq!(app.manual_input_buffer, "a");
+
+        handle_edit_input(&mut app, KeyCode::Backspace).await.unwrap();
+        assert_eq!(app.manual_input_buffer, "");
+    }
+
+    #[tokio::test]
+    async fn test_handle_edit_input_escape() {
+        let mut app = create_test_app();
+        app.start_manual_input("test");
+        app.manual_input_buffer = "some text".to_string();
+
+        handle_edit_input(&mut app, KeyCode::Esc).await.unwrap();
+        assert!(!app.manual_input_active);
+        assert_eq!(app.input_mode, InputMode::Normal);
+        assert!(app.manual_input_buffer.is_empty());
+    }
+}

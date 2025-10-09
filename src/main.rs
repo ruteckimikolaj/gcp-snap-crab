@@ -1,5 +1,6 @@
 mod app;
 mod gcp;
+mod state;
 mod ui;
 mod types;
 
@@ -10,13 +11,11 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ratatui::{
-    backend::CrosstermBackend,
-    Terminal,
-};
+use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io;
 
 use app::App;
+use gcp::GcpClient;
 use ui::run_app;
 
 #[tokio::main]
@@ -49,7 +48,8 @@ async fn run_tui_app(dry_run_mode: bool) -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     // Create app and run it
-    let app = App::new(dry_run_mode).await?;
+    let gcp_client = GcpClient::new();
+    let app = App::new(Box::new(gcp_client), dry_run_mode);
     let res = run_app(&mut terminal, app).await;
 
     // Restore terminal

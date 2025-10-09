@@ -28,6 +28,7 @@ anyhow = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.5.4", features = ["derive"] }
 unicode-width = "0.1"
+async-trait = "0.1.80"
 
 [profile.release]
 debug = false
@@ -47,6 +48,9 @@ pre-build = [
 pre-build = [
     "apt-get update && apt-get --assume-yes install libasound2-dev libssl-dev pkg-config",
 ]
+
+[dev-dependencies]
+mockall = "0.12.1"
 
 [badges]
 maintenance = { status = "actively-developed" }

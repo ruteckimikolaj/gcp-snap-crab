@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use reqwest::Client;
 use serde_json::Value;
@@ -7,6 +8,22 @@ use tokio::process::Command as AsyncCommand;
 use crate::types::{
     Backup, CreateBackupConfig, GcpApiResponse, Operation, RestoreRequest, SqlInstance,
 };
+
+#[cfg_attr(test, mockall::automock)]
+#[async_trait]
+pub trait GcpClientTrait: Send + Sync {
+    async fn check_prerequisites(&self) -> Result<String>;
+    async fn list_sql_instances(&self, project_id: &str) -> Result<Vec<SqlInstance>>;
+    async fn list_backups(&self, project_id: &str, instance_id: &str) -> Result<Vec<Backup>>;
+    async fn get_operation_status(&self, project_id: &str, operation_id: &str) -> Result<Operation>;
+    async fn restore_backup(
+        &self,
+        restore_request: &RestoreRequest,
+        target_project: &str,
+        target_instance: &str,
+    ) -> Result<String>;
+    async fn create_backup(&self, backup_config: &CreateBackupConfig) -> Result<String>;
+}
 
 pub struct GcpClient {
     client: Client,
@@ -19,7 +36,23 @@ impl GcpClient {
         }
     }
 
-    pub async fn check_prerequisites(&self) -> Result<String> {
+    async fn get_access_token(&self) -> Result<String> {
+        let output = AsyncCommand::new("gcloud")
+            .args(&["auth", "print-access-token"])
+            .output()
+            .await?;
+
+        if !output.status.success() {
+            return Err(anyhow!("Failed to get access token"));
+        }
+
+        Ok(String::from_utf8(output.stdout)?.trim().to_string())
+    }
+}
+
+#[async_trait]
+impl GcpClientTrait for GcpClient {
+    async fn check_prerequisites(&self) -> Result<String> {
         // Check if gcloud is installed
         let output = AsyncCommand::new("which")
             .arg("gcloud")
@@ -44,20 +77,7 @@ impl GcpClient {
         Ok(account)
     }
 
-    pub async fn get_access_token(&self) -> Result<String> {
-        let output = AsyncCommand::new("gcloud")
-            .args(&["auth", "print-access-token"])
-            .output()
-            .await?;
-
-        if !output.status.success() {
-            return Err(anyhow!("Failed to get access token"));
-        }
-
-        Ok(String::from_utf8(output.stdout)?.trim().to_string())
-    }
-
-    pub async fn list_sql_instances(&self, project_id: &str) -> Result<Vec<SqlInstance>> {
+    async fn list_sql_instances(&self, project_id: &str) -> Result<Vec<SqlInstance>> {
         let output = AsyncCommand::new("gcloud")
             .args(&[
                 "sql",
@@ -91,7 +111,7 @@ impl GcpClient {
         Ok(instances)
     }
 
-    pub async fn list_backups(&self, project_id: &str, instance_id: &str) -> Result<Vec<Backup>> {
+    async fn list_backups(&self, project_id: &str, instance_id: &str) -> Result<Vec<Backup>> {
         let output = AsyncCommand::new("gcloud")
             .args(&[
                 "sql",
@@ -132,7 +152,11 @@ impl GcpClient {
         Ok(backups)
     }
 
-    pub async fn get_operation_status(&self, project_id: &str, operation_id: &str) -> Result<Operation> {
+    async fn get_operation_status(
+        &self,
+        project_id: &str,
+        operation_id: &str,
+    ) -> Result<Operation> {
         let token = self.get_access_token().await?;
         let url = format!(
             "https://sqladmin.googleapis.com/v1/projects/{}/operations/{}",
@@ -147,23 +171,35 @@ impl GcpClient {
             .await?;
 
         if !response.status().is_success() {
-            return Err(anyhow!("Failed to get operation status: {}", response.status()));
+            return Err(anyhow!(
+                "Failed to get operation status: {}",
+                response.status()
+            ));
         }
 
         let api_response: GcpApiResponse = response.json().await?;
 
         Ok(Operation {
             id: operation_id.to_string(),
-            operation_type: api_response.operation_type.unwrap_or_else(|| "Unknown".to_string()),
+            operation_type: api_response
+                .operation_type
+                .unwrap_or_else(|| "Unknown".to_string()),
             status: api_response.status.unwrap_or_else(|| "Unknown".to_string()),
-            target_id: api_response.target_id.unwrap_or_else(|| "Unknown".to_string()),
+            target_id: api_response
+                .target_id
+                .unwrap_or_else(|| "Unknown".to_string()),
             start_time: api_response.start_time.and_then(|s| s.parse().ok()),
             end_time: api_response.end_time.and_then(|s| s.parse().ok()),
             error_message: api_response.error.map(|e| e.message),
         })
     }
 
-    pub async fn restore_backup(&self, restore_request: &RestoreRequest, target_project: &str, target_instance: &str) -> Result<String> {
+    async fn restore_backup(
+        &self,
+        restore_request: &RestoreRequest,
+        target_project: &str,
+        target_instance: &str,
+    ) -> Result<String> {
         let token = self.get_access_token().await?;
         let url = format!(
             "https://sqladmin.googleapis.com/v1/projects/{}/instances/{}/restoreBackup",
@@ -184,7 +220,7 @@ impl GcpClient {
         }
 
         let result: Value = response.json().await?;
-        
+
         if let Some(name) = result.get("name").and_then(|n| n.as_str()) {
             // Extract operation ID from the full operation name
             let operation_id = name.split('/').last().unwrap_or(name);
@@ -194,7 +230,7 @@ impl GcpClient {
         }
     }
 
-    pub async fn create_backup(&self, backup_config: &CreateBackupConfig) -> Result<String> {
+    async fn create_backup(&self, backup_config: &CreateBackupConfig) -> Result<String> {
         let token = self.get_access_token().await?;
         let url = format!(
             "https://sqladmin.googleapis.com/v1/projects/{}/instances/{}/backupRuns",

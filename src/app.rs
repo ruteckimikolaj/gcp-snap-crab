@@ -7,7 +7,7 @@ use crate::types::{
 };
 
 pub struct App {
-    pub operation_mode: OperationMode,
+    pub operation_mode: Option<OperationMode>,
     pub state: AppState,
     pub dry_run_mode: bool,
     pub input_mode: InputMode,
@@ -41,12 +41,12 @@ pub struct App {
 }
 
 impl App {
-    pub async fn new(dry_run_mode: bool, operation_mode: OperationMode) -> Result<Self> {
+    pub async fn new(dry_run_mode: bool) -> Result<Self> {
         let gcp_client = GcpClient::new();
 
         Ok(Self {
-            operation_mode,
-            state: AppState::Welcome,
+            operation_mode: None,
+            state: AppState::SelectingOperation,
             dry_run_mode,
             input_mode: InputMode::Normal,
             input_buffer: String::new(),
@@ -87,17 +87,7 @@ impl App {
             Ok(user) => {
                 self.authenticated_user = Some(user);
                 self.loading = false;
-
-                match self.operation_mode {
-                    OperationMode::Restore => {
-                        self.state = AppState::SelectingSourceProject;
-                        self.load_projects().await?;
-                    }
-                    OperationMode::CreateBackup => {
-                        self.state = AppState::SelectingProjectForBackup;
-                        self.load_projects().await?;
-                    }
-                }
+                self.state = AppState::SelectingOperation;
             }
             Err(e) => {
                 self.loading = false;
@@ -160,14 +150,12 @@ impl App {
             };
 
             if self.dry_run_mode {
-                // In dry-run mode, simulate a successful operation
                 let mock_operation_id =
                     format!("dry-run-operation-{}", chrono::Utc::now().timestamp());
                 self.restore_result = Some(mock_operation_id.clone());
                 self.loading = false;
                 self.state = AppState::SelectingTargetInstance;
 
-                // Create a mock completed operation for dry-run
                 let mock_operation = Operation {
                     id: mock_operation_id,
                     operation_type: "RESTORE_BACKUP".to_string(),
@@ -180,7 +168,6 @@ impl App {
                 self.restore_result = Some(mock_operation.id.clone());
                 self.restore_status = Some("DONE".to_string());
             } else {
-                // Real execution
                 match self
                     .gcp_client
                     .restore_backup(
@@ -250,11 +237,6 @@ impl App {
             {
                 Ok(operation) => {
                     self.restore_status = Some(operation.status.clone());
-
-                    if operation.status == "DONE" {
-                        // Operation completed successfully
-                        println!("Restore operation completed successfully!");
-                    }
                 }
                 Err(e) => {
                     eprintln!("Failed to check restore status: {}", e);
@@ -291,11 +273,14 @@ impl App {
 
     pub fn move_selection_up(&mut self) {
         match self.state {
+            AppState::SelectingOperation => {
+                if self.selected_operation_index > 0 {
+                    self.selected_operation_index -= 1;
+                }
+            }
             AppState::SelectingSourceProject
             | AppState::SelectingTargetProject
-            | AppState::SelectingProjectForBackup => {
-                // Projects are entered manually, no list navigation
-            }
+            | AppState::SelectingProjectForBackup => {}
             AppState::SelectingSourceInstance
             | AppState::SelectingTargetInstance
             | AppState::SelectingInstanceForBackup => {
@@ -314,11 +299,14 @@ impl App {
 
     pub fn move_selection_down(&mut self) {
         match self.state {
+            AppState::SelectingOperation => {
+                if self.selected_operation_index < 1 {
+                    self.selected_operation_index += 1;
+                }
+            }
             AppState::SelectingSourceProject
             | AppState::SelectingTargetProject
-            | AppState::SelectingProjectForBackup => {
-                // Projects are entered manually, no list navigation
-            }
+            | AppState::SelectingProjectForBackup => {}
             AppState::SelectingSourceInstance
             | AppState::SelectingTargetInstance
             | AppState::SelectingInstanceForBackup => {
@@ -351,9 +339,6 @@ impl App {
                 self.load_projects().await?;
             }
             AppState::SelectingSourceProject | AppState::SelectingProjectForBackup => {
-                self.start_manual_input("source_project");
-            }
-            AppState::SelectingProjectForBackup => {
                 self.start_manual_input("source_project");
             }
             AppState::SelectingSourceInstance => {
@@ -430,7 +415,7 @@ impl App {
                 project: project.clone(),
                 instance: instance.clone(),
                 name: backup_name.clone(),
-                description: backup_name, // Using name as description for now
+                description: backup_name,
             });
         }
     }
@@ -458,10 +443,11 @@ impl App {
                     self.manual_input_active = false;
                     self.input_mode = InputMode::Normal;
                     match self.operation_mode {
-                        OperationMode::Restore => self.state = AppState::SelectingSourceInstance,
-                        OperationMode::CreateBackup => {
+                        Some(OperationMode::Restore) => self.state = AppState::SelectingSourceInstance,
+                        Some(OperationMode::CreateBackup) => {
                             self.state = AppState::SelectingInstanceForBackup
                         }
+                        None => {}
                     }
                     self.load_instances(&input_value).await?;
                 }

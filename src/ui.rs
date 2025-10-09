@@ -5,7 +5,9 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap, BorderType},
+    widgets::{
+        Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap, BorderType
+    },
     Frame, Terminal,
 };
 use std::time::{Duration, Instant};
@@ -14,14 +16,14 @@ use crate::app::App;
 use crate::types::{AppState, InputMode, OperationMode};
 
 // Clean color palette for better visibility and modern look
-const BASE_FG: Color = Color::Rgb(216, 222, 233); // Main text
-const BASE_BG: Color = Color::Rgb(46, 52, 64); // Background
-const ACCENT_COLOR: Color = Color::Rgb(136, 192, 208); // Primary accent
-const SUCCESS_COLOR: Color = Color::Rgb(163, 190, 140); // Success/green
-const WARNING_COLOR: Color = Color::Rgb(235, 203, 139); // Warning/yellow
-const HIGHLIGHT_BG: Color = Color::Rgb(59, 66, 82); // Selection background
-const BORDER_COLOR: Color = Color::Rgb(76, 86, 106); // Inactive borders
-const INPUT_TEXT: Color = Color::Rgb(235, 203, 139); // Input text - bright and visible
+const BASE_FG: Color = Color::Rgb(216, 222, 233);          // Main text
+const BASE_BG: Color = Color::Rgb(46, 52, 64);             // Background
+const ACCENT_COLOR: Color = Color::Rgb(136, 192, 208);     // Primary accent
+const SUCCESS_COLOR: Color = Color::Rgb(163, 190, 140);    // Success/green
+const WARNING_COLOR: Color = Color::Rgb(235, 203, 139);    // Warning/yellow
+const HIGHLIGHT_BG: Color = Color::Rgb(59, 66, 82);        // Selection background
+const BORDER_COLOR: Color = Color::Rgb(76, 86, 106);       // Inactive borders
+const INPUT_TEXT: Color = Color::Rgb(235, 203, 139);       // Input text - bright and visible
 
 pub async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> Result<()> {
     app.initialize().await?;
@@ -60,7 +62,6 @@ pub async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> Re
             last_tick = Instant::now();
         }
 
-        // Periodic status check for ongoing operations
         if last_status_check.elapsed() >= status_check_interval {
             if app.restore_result.is_some() {
                 let _ = app.check_restore_status().await;
@@ -89,27 +90,16 @@ async fn handle_normal_input(app: &mut App, key: KeyCode, modifiers: KeyModifier
                 app.toggle_help();
             } else if app.manual_input_active {
                 app.cancel_manual_input();
-            } else if matches!(app.state, AppState::ConfirmRestore) {
-                app.target_instance = None;
-                app.selected_instance_index = 0;
-                app.state = AppState::SelectingTargetInstance;
-            } else if matches!(app.state, AppState::ConfirmCreateBackup) {
-                app.create_backup_config = None;
-                app.state = AppState::EnteringBackupName;
             } else {
                 match app.state {
-                    AppState::SelectingInstanceForBackup => {
-                        app.source_project = None;
-                        app.sql_instances.clear();
+                    AppState::ConfirmRestore => {
+                        app.target_instance = None;
                         app.selected_instance_index = 0;
-                        app.state = AppState::SelectingProjectForBackup;
+                        app.state = AppState::SelectingTargetInstance;
                     }
-                    AppState::EnteringBackupName => {
-                        app.source_instance = None;
-                        app.state = AppState::SelectingInstanceForBackup;
-                    }
-                    AppState::PerformingCreateBackup => {
-                        app.state = AppState::ConfirmCreateBackup;
+                    AppState::ConfirmCreateBackup => {
+                        app.create_backup_config = None;
+                        app.state = AppState::EnteringBackupName;
                     }
                     AppState::SelectingSourceInstance => {
                         app.source_project = None;
@@ -126,12 +116,6 @@ async fn handle_normal_input(app: &mut App, key: KeyCode, modifiers: KeyModifier
                     AppState::SelectingTargetProject => {
                         app.selected_backup = None;
                         app.state = AppState::SelectingBackup;
-                        // Reload backups for the current source
-                        if let (Some(project), Some(instance)) =
-                            (&app.source_project.clone(), &app.source_instance.clone())
-                        {
-                            let _ = app.load_backups(project, instance).await;
-                        }
                     }
                     AppState::SelectingTargetInstance => {
                         app.target_project = None;
@@ -164,38 +148,34 @@ async fn handle_normal_input(app: &mut App, key: KeyCode, modifiers: KeyModifier
         KeyCode::Char('h') => app.toggle_help(),
         KeyCode::Up => app.move_selection_up(),
         KeyCode::Down => app.move_selection_down(),
-        KeyCode::Enter => match app.state {
-            AppState::Welcome => {
-                app.state = AppState::SelectingSourceProject;
-            }
-            AppState::SelectingSourceProject | AppState::SelectingProjectForBackup => {
+        KeyCode::Enter => app.select_current_item().await?,
+        KeyCode::Char('m') => match app.state {
+            AppState::SelectingSourceProject
+            | AppState::SelectingTargetProject
+            | AppState::SelectingProjectForBackup => {
                 app.start_manual_input("source_project");
             }
-            AppState::SelectingTargetProject => {
-                app.start_manual_input("target_project");
+            AppState::SelectingSourceInstance
+            | AppState::SelectingTargetInstance
+            | AppState::SelectingInstanceForBackup => {
+                app.start_manual_input("instance");
             }
-            AppState::ConfirmRestore => {
-                app.perform_restore().await?;
+            AppState::SelectingBackup => {
+                app.start_manual_input("backup");
             }
-            AppState::ConfirmCreateBackup => {
-                app.perform_create_backup().await?;
+            AppState::EnteringBackupName => {
+                app.start_manual_input("backup_name");
             }
-            _ => {
-                app.select_current_item().await?;
-            }
+            _ => {}
         },
-        KeyCode::Char('m') => {
-            // Manual input mode
+        KeyCode::Char('r') => {
             match app.state {
-                AppState::SelectingSourceProject
-                | AppState::SelectingTargetProject
-                | AppState::SelectingProjectForBackup => {
-                    app.start_manual_input("source_project");
-                }
                 AppState::SelectingSourceInstance
                 | AppState::SelectingTargetInstance
                 | AppState::SelectingInstanceForBackup => {
-                    app.start_manual_input("instance");
+                    if let Some(project) = &app.source_project.clone() {
+                        app.load_instances(project).await?;
+                    }
                 }
                 AppState::SelectingBackup => {
                     if let (Some(project), Some(instance)) =
@@ -204,74 +184,29 @@ async fn handle_normal_input(app: &mut App, key: KeyCode, modifiers: KeyModifier
                         app.load_backups(project, instance).await?;
                     }
                 }
-                AppState::EnteringBackupName => {
-                    app.start_manual_input("backup_name");
-                }
                 _ => {}
             }
-        }
-        KeyCode::Char('r') => {
-            // Refresh/reload
-            match app.state {
-                AppState::SelectingSourceProject
-                | AppState::SelectingTargetProject
-                | AppState::SelectingProjectForBackup => {
-                    // Projects are entered manually, nothing to refresh
-                }
-                AppState::SelectingSourceInstance
-                | AppState::SelectingTargetInstance
-                | AppState::SelectingInstanceForBackup => {
-                    let project_clone = if let Some(project) = &app.source_project {
-                        Some(project.clone())
-                    } else {
-                        app.target_project.clone()
-                    };
-                    if let Some(project) = project_clone {
-                        app.load_instances(&project).await?;
-                    }
-                    // Also check restore status if there's an ongoing operation
-                    if app.restore_result.is_some() {
-                        app.check_restore_status().await?;
-                    }
-                    if app.backup_operation_id.is_some() {
-                        app.check_backup_status().await?;
-                    }
-                }
-                AppState::SelectingBackup => {
-                    let (project_clone, instance_clone) =
-                        (app.source_project.clone(), app.source_instance.clone());
-                    if let (Some(project), Some(instance)) = (project_clone, instance_clone) {
-                        app.load_backups(&project, &instance).await?;
-                    }
-                }
-                _ => {
-                    // In any other state, if there's a restore operation, check its status
-                    if app.restore_result.is_some() {
-                        app.check_restore_status().await?;
-                    }
-                    if app.backup_operation_id.is_some() {
-                        app.check_backup_status().await?;
-                    }
-                }
+            if app.restore_result.is_some() {
+                app.check_restore_status().await?;
+            }
+            if app.backup_operation_id.is_some() {
+                app.check_backup_status().await?;
             }
         }
         KeyCode::Char('n') => {
-            // Start new operation
+            app.state = AppState::SelectingOperation;
+            app.operation_mode = None;
+            app.source_project = None;
+            app.source_instance = None;
+            app.target_project = None;
+            app.target_instance = None;
+            app.selected_backup = None;
+            app.restore_config = None;
             app.restore_result = None;
             app.restore_status = None;
-            app.restore_config = None;
-            app.selected_backup = None;
-            app.target_instance = None;
             app.create_backup_config = None;
             app.backup_operation_id = None;
             app.backup_operation_status = None;
-            match app.operation_mode {
-                OperationMode::Restore => app.state = AppState::SelectingSourceProject,
-                OperationMode::CreateBackup => app.state = AppState::SelectingProjectForBackup,
-            }
-        }
-        KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => {
-            std::process::exit(0);
         }
         _ => {}
     }
@@ -316,9 +251,9 @@ fn ui(f: &mut Frame, app: &mut App) {
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3), // Header
-            Constraint::Min(0),    // Content
-            Constraint::Length(3), // Footer
+            Constraint::Length(3),
+            Constraint::Min(0),
+            Constraint::Length(3),
         ])
         .split(f.area());
 
@@ -348,7 +283,7 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
     };
 
     let subtitle = match app.state {
-        AppState::Welcome => "Welcome - Choose an operation to start",
+        AppState::SelectingOperation => "Welcome - Choose an operation to start",
         AppState::CheckingPrerequisites => "Checking Prerequisites...",
         AppState::SelectingSourceProject => "Step 1/5: Select Source Project",
         AppState::SelectingSourceInstance => "Step 2/5: Select Source Instance",
@@ -385,31 +320,22 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_content(f: &mut Frame, area: Rect, app: &mut App) {
-    match app.operation_mode {
-        OperationMode::Restore => match &app.state {
-            AppState::Welcome => render_welcome(f, area),
-            AppState::CheckingPrerequisites => render_loading(f, area, "Checking prerequisites..."),
-            AppState::SelectingSourceProject
-            | AppState::SelectingSourceInstance
-            | AppState::SelectingBackup
-            | AppState::SelectingTargetProject
-            | AppState::SelectingTargetInstance
-            | AppState::ConfirmRestore
-            | AppState::PerformingRestore => render_two_section_layout(f, area, app),
-            AppState::Error(msg) => render_error(f, area, msg),
-            _ => {}
-        },
-        OperationMode::CreateBackup => match &app.state {
-            AppState::Welcome => render_welcome(f, area),
-            AppState::CheckingPrerequisites => render_loading(f, area, "Checking prerequisites..."),
-            AppState::SelectingProjectForBackup
-            | AppState::SelectingInstanceForBackup
-            | AppState::EnteringBackupName
-            | AppState::ConfirmCreateBackup
-            | AppState::PerformingCreateBackup => render_create_backup_layout(f, area, app),
-            AppState::Error(msg) => render_error(f, area, msg),
-            _ => {}
-        },
+    match &app.state {
+        AppState::SelectingOperation => render_operation_selection(f, area, app),
+        AppState::CheckingPrerequisites => render_loading(f, area, "Checking prerequisites..."),
+        AppState::SelectingSourceProject
+        | AppState::SelectingSourceInstance
+        | AppState::SelectingBackup
+        | AppState::SelectingTargetProject
+        | AppState::SelectingTargetInstance
+        | AppState::ConfirmRestore
+        | AppState::PerformingRestore => render_two_section_layout(f, area, app),
+        AppState::SelectingProjectForBackup
+        | AppState::SelectingInstanceForBackup
+        | AppState::EnteringBackupName
+        | AppState::ConfirmCreateBackup
+        | AppState::PerformingCreateBackup => render_create_backup_layout(f, area, app),
+        AppState::Error(msg) => render_error(f, area, msg),
     }
 }
 
@@ -608,9 +534,9 @@ fn render_source_section(f: &mut Frame, area: Rect, app: &mut App) {
     let source_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(8), // Project
-            Constraint::Length(8), // Instance
-            Constraint::Min(0),    // Backup
+            Constraint::Length(8),   // Project
+            Constraint::Length(8),   // Instance
+            Constraint::Min(0),      // Backup
         ])
         .split(area);
 
@@ -638,7 +564,7 @@ fn render_source_section(f: &mut Frame, area: Rect, app: &mut App) {
                     .title("Source Project")
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
-                    .style(project_style),
+                    .style(project_style)
             )
             .alignment(Alignment::Center)
             .wrap(Wrap { trim: true }),
@@ -646,15 +572,10 @@ fn render_source_section(f: &mut Frame, area: Rect, app: &mut App) {
     );
 
     // Source Instance
-    if matches!(app.state, AppState::SelectingSourceInstance)
-        && !app.sql_instances.is_empty()
-        && app.source_instance.is_none()
-    {
+    if matches!(app.state, AppState::SelectingSourceInstance) && !app.sql_instances.is_empty() && app.source_instance.is_none() {
         render_instance_list(f, source_chunks[1], app, "Source Instance");
     } else {
-        let instance_style = if matches!(app.state, AppState::SelectingSourceInstance)
-            && app.source_instance.is_none()
-        {
+        let instance_style = if matches!(app.state, AppState::SelectingSourceInstance) && app.source_instance.is_none() {
             Style::default().fg(ACCENT_COLOR)
         } else if app.source_instance.is_some() {
             Style::default().fg(SUCCESS_COLOR)
@@ -683,7 +604,7 @@ fn render_source_section(f: &mut Frame, area: Rect, app: &mut App) {
                         .title("Source Instance")
                         .borders(Borders::ALL)
                         .border_type(BorderType::Rounded)
-                        .style(instance_style),
+                        .style(instance_style)
                 )
                 .alignment(Alignment::Center)
                 .wrap(Wrap { trim: true }),
@@ -692,20 +613,16 @@ fn render_source_section(f: &mut Frame, area: Rect, app: &mut App) {
     }
 
     // Source Backup
-    if matches!(app.state, AppState::SelectingBackup)
-        && !app.backups.is_empty()
-        && app.selected_backup.is_none()
-    {
+    if matches!(app.state, AppState::SelectingBackup) && !app.backups.is_empty() && app.selected_backup.is_none() {
         render_backup_list(f, source_chunks[2], app);
     } else {
-        let backup_style =
-            if matches!(app.state, AppState::SelectingBackup) && app.selected_backup.is_none() {
-                Style::default().fg(ACCENT_COLOR)
-            } else if app.selected_backup.is_some() {
-                Style::default().fg(SUCCESS_COLOR)
-            } else {
-                Style::default().fg(BORDER_COLOR)
-            };
+        let backup_style = if matches!(app.state, AppState::SelectingBackup) && app.selected_backup.is_none() {
+            Style::default().fg(ACCENT_COLOR)
+        } else if app.selected_backup.is_some() {
+            Style::default().fg(SUCCESS_COLOR)
+        } else {
+            Style::default().fg(BORDER_COLOR)
+        };
 
         let backup_content = if let Some(backup) = &app.selected_backup {
             format!("✓ {}", backup)
@@ -728,7 +645,7 @@ fn render_source_section(f: &mut Frame, area: Rect, app: &mut App) {
                         .title("Source Backup")
                         .borders(Borders::ALL)
                         .border_type(BorderType::Rounded)
-                        .style(backup_style),
+                        .style(backup_style)
                 )
                 .alignment(Alignment::Center)
                 .wrap(Wrap { trim: true }),
@@ -744,9 +661,7 @@ fn render_instance_list(f: &mut Frame, area: Rect, app: &mut App, title: &str) {
         .enumerate()
         .map(|(i, instance)| {
             let style = if i == app.selected_instance_index {
-                Style::default()
-                    .fg(ACCENT_COLOR)
-                    .add_modifier(Modifier::BOLD)
+                Style::default().fg(ACCENT_COLOR).add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(BASE_FG)
             };
@@ -760,13 +675,9 @@ fn render_instance_list(f: &mut Frame, area: Rect, app: &mut App, title: &str) {
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
                 .title(title)
-                .style(Style::default().fg(ACCENT_COLOR)),
+                .style(Style::default().fg(ACCENT_COLOR))
         )
-        .highlight_style(
-            Style::default()
-                .bg(HIGHLIGHT_BG)
-                .add_modifier(Modifier::BOLD),
-        )
+        .highlight_style(Style::default().bg(HIGHLIGHT_BG).add_modifier(Modifier::BOLD))
         .highlight_symbol("► ");
 
     let mut state = ListState::default();
@@ -782,16 +693,13 @@ fn render_backup_list(f: &mut Frame, area: Rect, app: &mut App) {
         .enumerate()
         .map(|(i, backup)| {
             let style = if i == app.selected_backup_index {
-                Style::default()
-                    .fg(ACCENT_COLOR)
-                    .add_modifier(Modifier::BOLD)
+                Style::default().fg(ACCENT_COLOR).add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(BASE_FG)
             };
 
             // Format the date (without time)
-            let date_str = backup
-                .start_time
+            let date_str = backup.start_time
                 .map(|t| t.format("%Y-%m-%d").to_string())
                 .unwrap_or_else(|| "Unknown".to_string());
 
@@ -808,13 +716,9 @@ fn render_backup_list(f: &mut Frame, area: Rect, app: &mut App) {
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
                 .title("Source Backup")
-                .style(Style::default().fg(ACCENT_COLOR)),
+                .style(Style::default().fg(ACCENT_COLOR))
         )
-        .highlight_style(
-            Style::default()
-                .bg(HIGHLIGHT_BG)
-                .add_modifier(Modifier::BOLD),
-        )
+        .highlight_style(Style::default().bg(HIGHLIGHT_BG).add_modifier(Modifier::BOLD))
         .highlight_symbol("► ");
 
     let mut state = ListState::default();
@@ -827,9 +731,9 @@ fn render_target_section(f: &mut Frame, area: Rect, app: &mut App) {
     let target_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(8), // Project
-            Constraint::Length(8), // Instance
-            Constraint::Min(0),    // Status/Info
+            Constraint::Length(8),   // Project
+            Constraint::Length(8),   // Instance
+            Constraint::Min(0),      // Status/Info
         ])
         .split(area);
 
@@ -857,7 +761,7 @@ fn render_target_section(f: &mut Frame, area: Rect, app: &mut App) {
                     .title("Target Project")
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
-                    .style(project_style),
+                    .style(project_style)
             )
             .alignment(Alignment::Center)
             .wrap(Wrap { trim: true }),
@@ -865,15 +769,10 @@ fn render_target_section(f: &mut Frame, area: Rect, app: &mut App) {
     );
 
     // Target Instance
-    if matches!(app.state, AppState::SelectingTargetInstance)
-        && !app.sql_instances.is_empty()
-        && app.target_instance.is_none()
-    {
+    if matches!(app.state, AppState::SelectingTargetInstance) && !app.sql_instances.is_empty() && app.target_instance.is_none() {
         render_instance_list(f, target_chunks[1], app, "Target Instance");
     } else {
-        let instance_style = if matches!(app.state, AppState::SelectingTargetInstance)
-            && app.target_instance.is_none()
-        {
+        let instance_style = if matches!(app.state, AppState::SelectingTargetInstance) && app.target_instance.is_none() {
             Style::default().fg(ACCENT_COLOR)
         } else if app.target_instance.is_some() {
             Style::default().fg(SUCCESS_COLOR)
@@ -902,7 +801,7 @@ fn render_target_section(f: &mut Frame, area: Rect, app: &mut App) {
                         .title("Target Instance")
                         .borders(Borders::ALL)
                         .border_type(BorderType::Rounded)
-                        .style(instance_style),
+                        .style(instance_style)
                 )
                 .alignment(Alignment::Center)
                 .wrap(Wrap { trim: true }),
@@ -914,9 +813,7 @@ fn render_target_section(f: &mut Frame, area: Rect, app: &mut App) {
     let status_content = if let Some(_operation_id) = &app.restore_result {
         match app.restore_status.as_deref() {
             Some("DONE") => "✅ Restore completed successfully!\nBackup has been applied.",
-            Some("RUNNING") => {
-                "🔄 Restore in progress...\nPlease wait, this may take several minutes."
-            }
+            Some("RUNNING") => "🔄 Restore in progress...\nPlease wait, this may take several minutes.",
             Some("PENDING") => "⏳ Restore is pending...\nOperation is queued for execution.",
             Some("FAILED") | Some("ERROR") => "❌ Restore failed!\nCheck logs for details.",
             _ => "📊 Checking restore status...\nMonitoring progress...",
@@ -948,7 +845,7 @@ fn render_target_section(f: &mut Frame, area: Rect, app: &mut App) {
                     .title("Restore Status")
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
-                    .style(status_style),
+                    .style(status_style)
             )
             .alignment(Alignment::Center)
             .wrap(Wrap { trim: true }),
@@ -966,30 +863,23 @@ fn render_welcome(f: &mut Frame, area: Rect) {
 
     let welcome_text = vec![
         Line::from(""),
-        Line::from(Span::styled(
-            "GCP SQL Backup Tool",
-            Style::default()
-                .fg(ACCENT_COLOR)
-                .add_modifier(Modifier::BOLD),
-        )),
+        Line::from(Span::styled("GCP SQL Backup Restore Tool", Style::default().fg(ACCENT_COLOR).add_modifier(Modifier::BOLD))),
         Line::from(""),
-        Line::from("A tool for restoring and creating SQL backups on GCP."),
+        Line::from("This tool helps you restore SQL backups between GCP projects."),
         Line::from(""),
-        Line::from("Run with --operation create-backup to create a new backup."),
+        Line::from("Steps:"),
+        Line::from("  1. Select source project and instance"),
+        Line::from("  2. Choose a backup to restore"),
+        Line::from("  3. Select target project and instance"),
+        Line::from("  4. Confirm and execute restoration"),
+        Line::from("  5. Monitor progress in real-time"),
         Line::from(""),
         Line::from("Navigation:"),
-        Line::from("  • Use arrow keys to navigate lists"),
-        Line::from("  • Use ESC to go back"),
-        Line::from("  • Use Q to quit"),
+        Line::from("  • Use ESC to go back to previous steps"),
+        Line::from("  • Use Q to quit the application"),
         Line::from(""),
-        Line::from(Span::styled(
-            "Press 'p' to start with project selection (default: restore)",
-            Style::default().fg(WARNING_COLOR),
-        )),
-        Line::from(Span::styled(
-            "Press 'h' for detailed help",
-            Style::default().fg(BORDER_COLOR),
-        )),
+        Line::from(Span::styled("Press 'p' to start with project selection", Style::default().fg(WARNING_COLOR))),
+        Line::from(Span::styled("Press 'h' for detailed help", Style::default().fg(BORDER_COLOR))),
     ];
 
     let paragraph = Paragraph::new(welcome_text)
@@ -1003,12 +893,7 @@ fn render_welcome(f: &mut Frame, area: Rect) {
 fn render_loading(f: &mut Frame, area: Rect, message: &str) {
     let loading_text = vec![
         Line::from(""),
-        Line::from(Span::styled(
-            "⏳ Loading...",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )),
+        Line::from(Span::styled("⏳ Loading...", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))),
         Line::from(""),
         Line::from(message),
         Line::from(""),
@@ -1022,20 +907,56 @@ fn render_loading(f: &mut Frame, area: Rect, message: &str) {
     f.render_widget(loading, area);
 }
 
+fn render_project_selection(f: &mut Frame, area: Rect, app: &App, title: &str) {
+    let block = Block::default()
+        .title(title)
+        .title_alignment(Alignment::Center)
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .style(Style::default().fg(BASE_FG).bg(BASE_BG));
+
+    let content = vec![
+        Line::from(""),
+        Line::from(Span::styled("Manual Project ID Entry", Style::default().fg(ACCENT_COLOR).add_modifier(Modifier::BOLD))),
+        Line::from(""),
+        Line::from("Enter your GCP project ID manually"),
+        Line::from("for security and flexibility."),
+        Line::from(""),
+        Line::from(Span::styled("Press [Enter] to open input", Style::default().fg(INPUT_TEXT))),
+    ];
+
+    if !app.remembered_projects.is_empty() {
+        let recent_text = format!("Recent: {}", app.remembered_projects.join(", "));
+        let content_with_recent = [
+            content,
+            vec![
+                Line::from(""),
+                Line::from(Span::styled(recent_text, Style::default().fg(BORDER_COLOR))),
+            ]
+        ].concat();
+
+        let paragraph = Paragraph::new(content_with_recent)
+            .block(block)
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: true });
+        f.render_widget(paragraph, area);
+    } else {
+        let paragraph = Paragraph::new(content)
+            .block(block)
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: true });
+        f.render_widget(paragraph, area);
+    }
+}
+
 fn render_error(f: &mut Frame, area: Rect, error_msg: &str) {
     let error_text = vec![
         Line::from(""),
-        Line::from(Span::styled(
-            "❌ ERROR",
-            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-        )),
+        Line::from(Span::styled("❌ ERROR", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))),
         Line::from(""),
         Line::from(error_msg),
         Line::from(""),
-        Line::from(Span::styled(
-            "Press 'q' to exit",
-            Style::default().fg(Color::Yellow),
-        )),
+        Line::from(Span::styled("Press 'q' to exit", Style::default().fg(Color::Yellow))),
     ];
 
     let error = Paragraph::new(error_text)
@@ -1051,7 +972,7 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
         " [Enter] Confirm | [Esc] Cancel "
     } else {
         match app.state {
-            AppState::Welcome => " [p] Start | [h] Help | [q] Quit ",
+            AppState::SelectingOperation => " [↑/↓] Navigate | [Enter] Select | [h] Help | [q] Quit ",
             _ => {
                 if app.restore_result.is_some() || app.backup_operation_id.is_some() {
                     " [↑/↓] Navigate | [Enter] Select | [Esc] Back | [r] Refresh | [n] New | [h] Help | [q] Quit "
@@ -1105,14 +1026,13 @@ fn render_restore_warning_popup(f: &mut Frame, app: &App) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3), // Warning header
-                Constraint::Length(8), // Configuration details
-                Constraint::Length(3), // Danger notice
-                Constraint::Min(0),    // Instructions
+                Constraint::Length(3),
+                Constraint::Length(8),
+                Constraint::Length(3),
+                Constraint::Min(0),
             ])
             .split(inner_area);
 
-        // Warning header
         let header_text = vec![Line::from(Span::styled(
             "🚨 IRREVERSIBLE DATABASE RESTORATION 🚨",
             Style::default()
@@ -1170,7 +1090,6 @@ fn render_restore_warning_popup(f: &mut Frame, app: &App) {
             chunks[1],
         );
 
-        // Danger notice
         let danger_text = vec![Line::from(Span::styled(
             "⚠️  THIS WILL COMPLETELY REPLACE THE TARGET DATABASE  ⚠️",
             Style::default()
@@ -1260,9 +1179,9 @@ fn render_create_backup_warning_popup(f: &mut Frame, app: &App) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3), // Header
-                Constraint::Length(8), // Details
-                Constraint::Min(0),    // Instructions
+                Constraint::Length(3),
+                Constraint::Length(8),
+                Constraint::Min(0),
             ])
             .split(inner_area);
 
@@ -1367,9 +1286,7 @@ fn render_help_popup(f: &mut Frame, _app: &App) {
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         )),
-        Line::from("  --operation restore       (Default) Restore a backup"),
-        Line::from("  --operation create-backup Create a new backup"),
-        Line::from("  --dry-run                 Simulate operations"),
+        Line::from("  --dry-run                 Simulate operations without executing"),
         Line::from(""),
         Line::from(Span::styled(
             "Navigation:",
@@ -1464,7 +1381,7 @@ fn render_manual_input_popup(f: &mut Frame, app: &App) {
         (area.width * 60 / 100).min(max_width).max(min_width)
     };
 
-    let height = 9; // Fixed reasonable height
+    let height = 9;
 
     let popup_area = Rect {
         x: (area.width.saturating_sub(width)) / 2,
@@ -1485,13 +1402,13 @@ fn render_manual_input_popup(f: &mut Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3), // Input field with title
-            Constraint::Min(0),    // Help text/previous inputs
+            Constraint::Length(3),
+            Constraint::Min(0),
         ])
         .split(popup_area);
 
     let input = Paragraph::new(app.manual_input_buffer.as_str())
-        .style(Style::default().fg(INPUT_TEXT)) // Bright visible text
+        .style(Style::default().fg(INPUT_TEXT))
         .block(
             Block::default()
                 .borders(Borders::ALL)
@@ -1502,7 +1419,6 @@ fn render_manual_input_popup(f: &mut Frame, app: &App) {
         );
     f.render_widget(input, chunks[0]);
 
-    // Set cursor position
     f.set_cursor_position((
         chunks[0].x + app.manual_input_buffer.len() as u16 + 1,
         chunks[0].y + 1,

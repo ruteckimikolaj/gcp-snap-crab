@@ -9,7 +9,7 @@ use crate::types::{
     Backup, CreateBackupConfig, GcpApiResponse, Operation, RestoreRequest, SqlInstance,
 };
 
-#[cfg_attr(test, mockall::automock)]
+#[mockall::automock]
 #[async_trait]
 pub trait GcpClientTrait: Send + Sync {
     async fn check_prerequisites(&self) -> Result<String>;

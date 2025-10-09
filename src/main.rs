@@ -1,9 +1,3 @@
-mod app;
-mod gcp;
-mod state;
-mod ui;
-mod types;
-
 use anyhow::Result;
 use clap::{Arg, Command};
 use crossterm::{
@@ -11,12 +5,13 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use gcp_snap_crab::{
+    app::App,
+    gcp::GcpClient,
+    ui::run_app,
+};
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io;
-
-use app::App;
-use gcp::GcpClient;
-use ui::run_app;
 
 #[tokio::main]
 async fn main() -> Result<()> {

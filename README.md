@@ -8,7 +8,7 @@
 
 # 🦀 GCP Snap Crab
 
-A minimalist set of scripts to restore Google Cloud Platform (GCP) resources from backups.
+A minimalist, terminal-based tool to create and restore Google Cloud Platform (GCP) SQL database backups.
 
 ## Table of Contents
 
@@ -21,7 +21,8 @@ A minimalist set of scripts to restore Google Cloud Platform (GCP) resources fro
 
 ## ✨ Features
 
-- **Restore GCE Snapshots**: Apply snapshots to existing disks. Currently only mysql instances are supported.
+- **Create GCE Snapshots**: Create named backups for existing database instances.
+- **Restore GCE Snapshots**: Restore backups to existing database instances. Currently only mysql instances are supported.
 - **Restore GCE Disks**: Create new disks from snapshots. ![in progress](https://img.shields.io/badge/status-in--progress-red)
 - **Restore GKE Clusters**: Restore GKE clusters from backups.![in progress](https://img.shields.io/badge/status-in--progress-red)
 

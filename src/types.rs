@@ -65,7 +65,7 @@ pub struct GcpError {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AppState {
-    Welcome,
+    SelectingOperation,
     CheckingPrerequisites,
     SelectingSourceProject,
     SelectingSourceInstance,

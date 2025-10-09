@@ -7,7 +7,7 @@ use crate::types::{
 };
 
 pub struct App {
-    pub operation_mode: OperationMode,
+    pub operation_mode: Option<OperationMode>,
     pub state: AppState,
     pub dry_run_mode: bool,
     pub input_mode: InputMode,
@@ -18,6 +18,7 @@ pub struct App {
     pub backups: Vec<Backup>,
     pub remembered_projects: Vec<String>,
     pub remembered_instances: Vec<String>,
+    pub selected_operation_index: usize,
     pub selected_project_index: usize,
     pub selected_instance_index: usize,
     pub selected_backup_index: usize,
@@ -40,12 +41,12 @@ pub struct App {
 }
 
 impl App {
-    pub async fn new(dry_run_mode: bool, operation_mode: OperationMode) -> Result<Self> {
+    pub async fn new(dry_run_mode: bool) -> Result<Self> {
         let gcp_client = GcpClient::new();
 
         Ok(Self {
-            operation_mode,
-            state: AppState::Welcome,
+            operation_mode: None,
+            state: AppState::SelectingOperation,
             dry_run_mode,
             input_mode: InputMode::Normal,
             input_buffer: String::new(),
@@ -55,6 +56,7 @@ impl App {
             backups: Vec::new(),
             remembered_projects: Vec::new(),
             remembered_instances: Vec::new(),
+            selected_operation_index: 0,
             selected_project_index: 0,
             selected_instance_index: 0,
             selected_backup_index: 0,
@@ -85,17 +87,7 @@ impl App {
             Ok(user) => {
                 self.authenticated_user = Some(user);
                 self.loading = false;
-
-                match self.operation_mode {
-                    OperationMode::Restore => {
-                        self.state = AppState::SelectingSourceProject;
-                        self.load_projects().await?;
-                    }
-                    OperationMode::CreateBackup => {
-                        self.state = AppState::SelectingProjectForBackup;
-                        self.load_projects().await?;
-                    }
-                }
+                self.state = AppState::SelectingOperation;
             }
             Err(e) => {
                 self.loading = false;
@@ -107,7 +99,6 @@ impl App {
     }
 
     pub async fn load_projects(&mut self) -> Result<()> {
-        // Skip loading projects from GCP, go directly to manual input
         self.loading = false;
         self.start_manual_input("source_project");
         Ok(())
@@ -159,15 +150,12 @@ impl App {
             };
 
             if self.dry_run_mode {
-                // In dry-run mode, simulate a successful operation
                 let mock_operation_id =
                     format!("dry-run-operation-{}", chrono::Utc::now().timestamp());
                 self.restore_result = Some(mock_operation_id.clone());
                 self.loading = false;
-                // Return to main screen and start monitoring
                 self.state = AppState::SelectingTargetInstance;
 
-                // Create a mock completed operation for dry-run
                 let mock_operation = Operation {
                     id: mock_operation_id,
                     operation_type: "RESTORE_BACKUP".to_string(),
@@ -177,11 +165,9 @@ impl App {
                     end_time: Some(chrono::Utc::now()),
                     error_message: None,
                 };
-                // In dry-run mode, we simulate immediate completion
                 self.restore_result = Some(mock_operation.id.clone());
                 self.restore_status = Some("DONE".to_string());
             } else {
-                // Real execution
                 match self
                     .gcp_client
                     .restore_backup(
@@ -193,11 +179,9 @@ impl App {
                 {
                     Ok(operation_id) => {
                         self.restore_result = Some(operation_id.clone());
-                        self.restore_status = Some("RUNNING".to_string()); // Initialize as running
+                        self.restore_status = Some("RUNNING".to_string());
                         self.loading = false;
-                        // Return to main screen and start monitoring
                         self.state = AppState::SelectingTargetInstance;
-                        // Don't check status immediately - let the periodic checker handle it
                     }
                     Err(e) => {
                         self.loading = false;
@@ -242,7 +226,6 @@ impl App {
     pub async fn check_restore_status(&mut self) -> Result<()> {
         if let (Some(operation_id), Some(config)) = (&self.restore_result, &self.restore_config) {
             if self.dry_run_mode {
-                // In dry-run mode, simulate completed status after some time
                 self.restore_status = Some("DONE".to_string());
                 return Ok(());
             }
@@ -253,16 +236,9 @@ impl App {
                 .await
             {
                 Ok(operation) => {
-                    // Update the restore status with the actual operation status
                     self.restore_status = Some(operation.status.clone());
-
-                    if operation.status == "DONE" {
-                        // Operation completed successfully
-                        println!("Restore operation completed successfully!");
-                    }
                 }
                 Err(e) => {
-                    // Don't fail completely on status check errors, just log them
                     eprintln!("Failed to check restore status: {}", e);
                 }
             }
@@ -297,11 +273,14 @@ impl App {
 
     pub fn move_selection_up(&mut self) {
         match self.state {
+            AppState::SelectingOperation => {
+                if self.selected_operation_index > 0 {
+                    self.selected_operation_index -= 1;
+                }
+            }
             AppState::SelectingSourceProject
             | AppState::SelectingTargetProject
-            | AppState::SelectingProjectForBackup => {
-                // Projects are entered manually, no list navigation
-            }
+            | AppState::SelectingProjectForBackup => {}
             AppState::SelectingSourceInstance
             | AppState::SelectingTargetInstance
             | AppState::SelectingInstanceForBackup => {
@@ -320,11 +299,14 @@ impl App {
 
     pub fn move_selection_down(&mut self) {
         match self.state {
+            AppState::SelectingOperation => {
+                if self.selected_operation_index < 1 {
+                    self.selected_operation_index += 1;
+                }
+            }
             AppState::SelectingSourceProject
             | AppState::SelectingTargetProject
-            | AppState::SelectingProjectForBackup => {
-                // Projects are entered manually, no list navigation
-            }
+            | AppState::SelectingProjectForBackup => {}
             AppState::SelectingSourceInstance
             | AppState::SelectingTargetInstance
             | AppState::SelectingInstanceForBackup => {
@@ -343,11 +325,20 @@ impl App {
 
     pub async fn select_current_item(&mut self) -> Result<()> {
         match self.state {
-            AppState::SelectingSourceProject => {
-                // Always use manual input for source project
-                self.start_manual_input("source_project");
+            AppState::SelectingOperation => {
+                let selected_mode = if self.selected_operation_index == 0 {
+                    OperationMode::Restore
+                } else {
+                    OperationMode::CreateBackup
+                };
+                self.operation_mode = Some(selected_mode);
+                match selected_mode {
+                    OperationMode::Restore => self.state = AppState::SelectingSourceProject,
+                    OperationMode::CreateBackup => self.state = AppState::SelectingProjectForBackup,
+                }
+                self.load_projects().await?;
             }
-            AppState::SelectingProjectForBackup => {
+            AppState::SelectingSourceProject | AppState::SelectingProjectForBackup => {
                 self.start_manual_input("source_project");
             }
             AppState::SelectingSourceInstance => {
@@ -372,11 +363,10 @@ impl App {
                 if let Some(backup) = self.backups.get(self.selected_backup_index).cloned() {
                     self.selected_backup = Some(backup.id.clone());
                     self.state = AppState::SelectingTargetProject;
-                    self.selected_project_index = 0; // Reset selection
+                    self.selected_project_index = 0;
                 }
             }
             AppState::SelectingTargetProject => {
-                // Always use manual input for target project
                 self.start_manual_input("target_project");
             }
             AppState::SelectingTargetInstance => {
@@ -425,7 +415,7 @@ impl App {
                 project: project.clone(),
                 instance: instance.clone(),
                 name: backup_name.clone(),
-                description: backup_name, // Using name as description for now
+                description: backup_name,
             });
         }
     }
@@ -446,7 +436,6 @@ impl App {
         if !input_value.is_empty() {
             match self.manual_input_type.as_str() {
                 "source_project" => {
-                    // Remember the project if not already remembered
                     if !self.remembered_projects.contains(&input_value) {
                         self.remembered_projects.push(input_value.clone());
                     }
@@ -454,15 +443,15 @@ impl App {
                     self.manual_input_active = false;
                     self.input_mode = InputMode::Normal;
                     match self.operation_mode {
-                        OperationMode::Restore => self.state = AppState::SelectingSourceInstance,
-                        OperationMode::CreateBackup => {
+                        Some(OperationMode::Restore) => self.state = AppState::SelectingSourceInstance,
+                        Some(OperationMode::CreateBackup) => {
                             self.state = AppState::SelectingInstanceForBackup
                         }
+                        None => {}
                     }
                     self.load_instances(&input_value).await?;
                 }
                 "target_project" => {
-                    // Remember the project if not already remembered
                     if !self.remembered_projects.contains(&input_value) {
                         self.remembered_projects.push(input_value.clone());
                     }
@@ -473,7 +462,6 @@ impl App {
                     self.load_instances(&input_value).await?;
                 }
                 "instance" => {
-                    // Remember the instance if not already remembered
                     if !self.remembered_instances.contains(&input_value) {
                         self.remembered_instances.push(input_value.clone());
                     }

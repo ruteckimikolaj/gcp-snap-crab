@@ -1,6 +1,6 @@
 use gcp_snap_crab::app::App;
 use gcp_snap_crab::gcp::MockGcpClientTrait;
-use gcp_snap_crab::types::{AppState, InputMode, OperationMode, SqlInstance};
+use gcp_snap_crab::types::{AppState, InputMode, OperationMode, RestoreConfig, SqlInstance};
 use anyhow::anyhow;
 
 #[test]
@@ -163,4 +163,63 @@ fn test_navigation_instance_selection() {
     // Move up at the start
     app.move_selection_up();
     assert_eq!(app.create_backup_flow.selected_instance_index, 0);
+}
+
+#[tokio::test]
+async fn test_confirm_restore_triggers_perform_restore() {
+
+    let mut mock_gcp_client = MockGcpClientTrait::new();
+    
+    // Mock the restore_backup call
+    mock_gcp_client
+        .expect_restore_backup()
+        .times(1)
+        .returning(|_, _, _| Ok("test-operation-id".to_string()));
+
+    let mut app = App::new(Box::new(mock_gcp_client), false);
+    
+    // Set up the app in ConfirmRestore state with proper config
+    app.state = AppState::ConfirmRestore;
+    app.restore_flow.config = Some(RestoreConfig {
+        backup_id: "test-backup".to_string(),
+        source_project: "source-proj".to_string(),
+        source_instance: "source-inst".to_string(),
+        target_project: "target-proj".to_string(),
+        target_instance: "target-inst".to_string(),
+    });
+
+    // Call select_current_item which should trigger perform_restore
+    app.select_current_item().await.unwrap();
+
+    // Verify the operation was triggered
+    assert!(app.restore_flow.operation_id.is_some());
+    assert_eq!(app.restore_flow.operation_id.unwrap(), "test-operation-id");
+    assert_eq!(app.state, AppState::SelectingTargetInstance); // State after restore starts
+}
+
+#[tokio::test]
+async fn test_confirm_restore_dry_run_mode() {
+    let mock_gcp_client = MockGcpClientTrait::new();
+    // No expectations needed for dry-run mode
+
+    let mut app = App::new(Box::new(mock_gcp_client), true); // Enable dry-run mode
+    
+    // Set up the app in ConfirmRestore state with proper config
+    app.state = AppState::ConfirmRestore;
+    app.restore_flow.config = Some(RestoreConfig {
+        backup_id: "test-backup".to_string(),
+        source_project: "source-proj".to_string(),
+        source_instance: "source-inst".to_string(),
+        target_project: "target-proj".to_string(),
+        target_instance: "target-inst".to_string(),
+    });
+
+    // Call select_current_item which should trigger perform_restore in dry-run mode
+    app.select_current_item().await.unwrap();
+
+    // Verify dry-run operation was completed
+    assert!(app.restore_flow.operation_id.is_some());
+    assert!(app.restore_flow.operation_id.unwrap().contains("dry-run-operation"));
+    assert_eq!(app.restore_flow.status, Some("DONE".to_string()));
+    assert_eq!(app.state, AppState::SelectingTargetInstance);
 }

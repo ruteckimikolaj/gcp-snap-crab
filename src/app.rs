@@ -4,7 +4,7 @@ use crate::gcp::GcpClientTrait;
 use crate::state::create_backup_flow::CreateBackupFlow;
 use crate::state::restore_flow::RestoreFlow;
 use crate::types::{
-    AppState, Backup, CreateBackupConfig, InputMode, Operation, OperationMode, RestoreConfig,
+    AppState, Backup, CreateBackupConfig, InputMode, OperationMode, RestoreConfig,
     RestoreRequest, RestoreBackupContext, SqlInstance,
 };
 
@@ -395,6 +395,9 @@ impl App {
             }
             AppState::ConfirmCreateBackup => {
                 self.perform_create_backup().await?;
+            }
+            AppState::ConfirmRestore => {
+                self.perform_restore().await?;
             }
             _ => {}
         }

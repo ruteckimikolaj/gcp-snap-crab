@@ -73,9 +73,12 @@ A minimalist, terminal-based tool to create and restore **Google Cloud SQL** dat
 cargo install gcp-snap-crab
 ```
 
-### Using Homebrew (macOS)
+### Using ![Homebrew](https://img.shields.io/badge/Homebrew-222222?style=for-the-badge&logo=Homebrew&logoColor=FBB040)
 
-*Coming soon.*
+```shell
+brew tap ruteckimikolaj/homebrew-tap
+brew install gcp-snap-crab
+```
 
 ### From source
 

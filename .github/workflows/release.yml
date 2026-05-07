@@ -1,9 +1,8 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "*.*.*"
+  release:
+    types: [published]
 
 permissions:
   contents: write
@@ -35,18 +34,22 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock')
+            }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-
-      - name: Install dependencies (Ubuntu)
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libssl-dev pkg-config
 
       - name: Install cross
         if: matrix.os == 'ubuntu-latest'
@@ -63,81 +66,53 @@ jobs:
       - name: Package
         run: |
           BIN_NAME=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].targets[] | select(.kind[] == "bin") | .name')
-          if [ "${{ matrix.os }}" = "macos-latest" ]; then
-            tar -czf ${BIN_NAME}-${{ matrix.name }}.tar.gz -C target/${{ matrix.target }}/release ${BIN_NAME}
-          else
-            tar -czf ${BIN_NAME}-${{ matrix.name }}.tar.gz -C target/${{ matrix.target }}/release ${BIN_NAME}
-          fi
+          tar -czf ${BIN_NAME}-${{ matrix.name }}.tar.gz -C target/${{ matrix.target }}/release ${BIN_NAME}
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.name }}
           path: "*.tar.gz"
-      - name: Cache Cargo dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
   publish-cargo:
-    name: Publish to Cargo
+    name: Publish to crates.io
     runs-on: ubuntu-latest
     needs: build
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Publish to crates.io
+      - name: Publish
         run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
   release:
-    name: Create GitHub Release
+    name: Upload release assets
     runs-on: ubuntu-latest
-    needs: [build]
+    needs: build
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
 
-      - name: Move artifacts to release directory
+      - name: Prepare release assets
         run: |
           mkdir -p release
           find artifacts -name "*.tar.gz" -type f -exec cp {} release/ \;
-          ls -la release/
-
-      - name: Create checksums
-        run: |
           cd release
-          if [ -n "$(ls -A *.tar.gz 2>/dev/null)" ]; then
-            sha256sum *.tar.gz > checksums.txt
-            echo "Created checksums for:"
-            cat checksums.txt
-          else
-            echo "No .tar.gz files found in release directory!"
-            exit 1
-          fi
+          sha256sum *.tar.gz > checksums.txt
 
-      - name: Upload to release
-        uses: softprops/action-gh-release@v2
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             release/*.tar.gz
             release/checksums.txt
-          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
   # homebrew:
   #   name: Publish to Homebrew
   #   runs-on: ubuntu-latest

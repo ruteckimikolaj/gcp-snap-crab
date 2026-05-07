@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use crate::types::{RestoreConfig, SqlInstance, Backup};
 
 #[derive(Default)]
@@ -9,6 +11,7 @@ pub struct RestoreFlow {
     pub selected_backup: Option<String>,
     pub config: Option<RestoreConfig>,
     pub operation_id: Option<String>,
+    pub operation_started_at: Option<Instant>,
     pub status: Option<String>,
     pub instances: Vec<SqlInstance>,
     pub backups: Vec<Backup>,

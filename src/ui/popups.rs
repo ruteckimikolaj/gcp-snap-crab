@@ -357,6 +357,7 @@ pub(super) fn render_help_popup(f: &mut Frame, _app: &App) {
         )),
         Line::from("  M         Manual input for projects/instances"),
         Line::from("  R         Refresh current list or operation status"),
+        Line::from("  Y         Copy backup/operation ID to clipboard"),
         Line::from("  N         Start a new operation"),
         Line::from("  H         Toggle this help screen"),
         Line::from("  Q         Quit application"),

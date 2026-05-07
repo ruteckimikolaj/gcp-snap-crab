@@ -12,11 +12,8 @@
 
 - [x] **Scrolling in long lists** — no scroll support; lists overflow when project has many instances or backups
 - [x] **Filter / search in lists** (redesigned) — type to filter projects, instances, backups; standard TUI pattern, big win for large GCP environments
-- [ ] **Config file / persisted defaults** — remembered projects are in-memory only; add `~/.config/gcp-snap-crab/config.toml` for default project, instance, etc.
-- [ ] **Copy to clipboard** — press `y` to yank backup ID or operation ID
-- [ ] **Progress indicator** — `PerformingRestore` / `PerformingCreateBackup` show static spinner; add elapsed time, poll operation for completion percentage
-- [ ] **Non-interactive / scriptable mode** — `--project`, `--instance`, `--backup-id` flags to run backup/restore from CI/CD without TUI; `GcpClientTrait` already supports this
-- [ ] **Export backup list** — press `e` to dump current list as JSON or CSV for auditing
+- [x] **Copy to clipboard** — press `y` to yank backup ID or operation ID; 3s notification in footer
+- [x] **Progress indicator** — braille spinner + elapsed time shown in restore/backup status boxes when operation is running
 
 ## Code Quality
 

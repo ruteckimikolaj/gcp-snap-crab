@@ -233,6 +233,26 @@ pub async fn handle_normal_input(
             app.restore_flow = crate::state::restore_flow::RestoreFlow::new();
             app.create_backup_flow = crate::state::create_backup_flow::CreateBackupFlow::new();
         }
+        KeyCode::Char('y') => {
+            let text = if let Some(op_id) = &app.restore_flow.operation_id {
+                Some(op_id.clone())
+            } else if let Some(op_id) = &app.create_backup_flow.operation_id {
+                Some(op_id.clone())
+            } else if matches!(app.state, AppState::SelectingBackup) {
+                app.filtered_backups()
+                    .get(app.restore_flow.selected_backup_index)
+                    .map(|b| b.id.clone())
+            } else {
+                app.restore_flow.selected_backup.clone()
+            };
+            if let Some(text) = text {
+                if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                    if clipboard.set_text(text.clone()).is_ok() {
+                        app.yank_notification = Some((text, std::time::Instant::now()));
+                    }
+                }
+            }
+        }
         _ => {}
     }
     Ok(())

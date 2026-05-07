@@ -30,6 +30,7 @@ clap = { version = "4", features = ["derive"] }
 unicode-width = "0.2"
 async-trait = "0.1"
 mockall = "0.14"
+arboard = "3"
 
 [profile.release]
 debug = false

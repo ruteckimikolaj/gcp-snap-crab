@@ -1,4 +1,5 @@
 use anyhow::Result;
+use std::time::Instant;
 
 use crate::types::{AppState, RestoreBackupContext, RestoreConfig, RestoreRequest};
 use super::App;
@@ -8,6 +9,7 @@ impl App {
         if let Some(config) = self.restore_flow.config.clone() {
             self.loading = true;
             self.state = AppState::PerformingRestore;
+            self.restore_flow.operation_started_at = Some(Instant::now());
 
             let restore_request = RestoreRequest {
                 restore_backup_context: RestoreBackupContext {

@@ -1,4 +1,5 @@
 use anyhow::Result;
+use std::time::Instant;
 
 use crate::types::{AppState, CreateBackupConfig};
 use super::App;
@@ -8,6 +9,7 @@ impl App {
         if let Some(config) = &self.create_backup_flow.config {
             self.loading = true;
             self.state = AppState::PerformingCreateBackup;
+            self.create_backup_flow.operation_started_at = Some(Instant::now());
 
             if self.dry_run_mode {
                 let mock_operation_id =

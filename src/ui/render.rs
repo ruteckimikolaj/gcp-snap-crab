@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -10,6 +12,23 @@ use ratatui::{
 use crate::app::App;
 use crate::types::{AppState, InputMode};
 use super::{ACCENT_COLOR, BASE_BG, BASE_FG, BORDER_COLOR, SUCCESS_COLOR, WARNING_COLOR};
+
+const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+fn spinner_frame(started_at: Option<Instant>) -> &'static str {
+    let ms = started_at.map(|t| t.elapsed().as_millis()).unwrap_or(0);
+    SPINNER[(ms / 100) as usize % SPINNER.len()]
+}
+
+fn format_elapsed(started_at: Option<Instant>) -> String {
+    let Some(t) = started_at else { return String::new() };
+    let secs = t.elapsed().as_secs();
+    if secs < 60 {
+        format!("({}s)", secs)
+    } else {
+        format!("({}m {}s)", secs / 60, secs % 60)
+    }
+}
 use super::widgets::{
     render_backup_list, render_error, render_instance_list, render_loading, render_search_bar,
     render_step_box,
@@ -87,6 +106,26 @@ pub(super) fn render_footer(f: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
+    if let Some((ref text, ref since)) = app.yank_notification {
+        if since.elapsed().as_secs() < 3 {
+            let truncated = if text.len() > 40 { format!("{}…", &text[..40]) } else { text.clone() };
+            f.render_widget(
+                Paragraph::new(format!("✓ Copied: {}", truncated))
+                    .block(
+                        Block::default()
+                            .title("Clipboard")
+                            .borders(Borders::ALL)
+                            .border_type(BorderType::Rounded)
+                            .style(Style::default().fg(SUCCESS_COLOR)),
+                    )
+                    .alignment(Alignment::Center)
+                    .style(Style::default().fg(SUCCESS_COLOR)),
+                area,
+            );
+            return;
+        }
+    }
+
     let help_text = if app.manual_input_active {
         " [Enter] Confirm | [Esc] Cancel "
     } else {
@@ -98,9 +137,9 @@ pub(super) fn render_footer(f: &mut Frame, area: Rect, app: &App) {
                 if app.restore_flow.operation_id.is_some()
                     || app.create_backup_flow.operation_id.is_some()
                 {
-                    " [↑/↓] Navigate | [Enter] Select | [Esc] Back | [r] Refresh | [n] New | [h] Help | [q] Quit "
+                    " [↑/↓] Navigate | [Enter] Select | [Esc] Back | [r] Refresh | [y] Copy ID | [n] New | [h] Help | [q] Quit "
                 } else {
-                    " [↑/↓] Navigate | [Enter] Select | [Esc] Back | [r] Refresh | [/] Search | [h] Help | [q] Quit "
+                    " [↑/↓] Navigate | [Enter] Select | [Esc] Back | [r] Refresh | [/] Search | [y] Copy | [h] Help | [q] Quit "
                 }
             }
         }
@@ -178,17 +217,22 @@ fn render_backup_name_input(f: &mut Frame, area: Rect, app: &mut App) {
 
 fn render_backup_status(f: &mut Frame, area: Rect, app: &mut App) {
     let status_content = if let Some(_operation_id) = &app.create_backup_flow.operation_id {
+        let elapsed = format_elapsed(app.create_backup_flow.operation_started_at);
         match app.create_backup_flow.status.as_deref() {
-            Some("DONE") => "✅ Backup created successfully!",
-            Some("RUNNING") => "🔄 Backup in progress...",
-            Some("PENDING") => "⏳ Backup is pending...",
-            Some("FAILED") | Some("ERROR") => "❌ Backup failed!",
-            _ => "📊 Checking backup status...",
+            Some("DONE") => "✅ Backup created successfully!".to_string(),
+            Some("RUNNING") => format!(
+                "{} Backup in progress... {}",
+                spinner_frame(app.create_backup_flow.operation_started_at),
+                elapsed
+            ),
+            Some("PENDING") => format!("⏳ Backup is pending... {}", elapsed),
+            Some("FAILED") | Some("ERROR") => "❌ Backup failed!".to_string(),
+            _ => format!("{} Checking backup status... {}", spinner_frame(app.create_backup_flow.operation_started_at), elapsed),
         }
     } else if app.create_backup_flow.config.is_some() {
-        "✅ Ready to create backup!\nPress Enter to confirm."
+        "✅ Ready to create backup!\nPress Enter to confirm.".to_string()
     } else {
-        "Complete previous steps."
+        "Complete previous steps.".to_string()
     };
 
     let status_style = if let Some(_) = &app.create_backup_flow.operation_id {
@@ -330,21 +374,24 @@ fn render_target_section(f: &mut Frame, area: Rect, app: &mut App) {
     }
 
     let status_content = if let Some(_operation_id) = &app.restore_flow.operation_id {
+        let elapsed = format_elapsed(app.restore_flow.operation_started_at);
         match app.restore_flow.status.as_deref() {
-            Some("DONE") => "✅ Restore completed successfully!\nBackup has been applied.",
-            Some("RUNNING") => {
-                "🔄 Restore in progress...\nPlease wait, this may take several minutes."
-            }
-            Some("PENDING") => "⏳ Restore is pending...\nOperation is queued for execution.",
-            Some("FAILED") | Some("ERROR") => "❌ Restore failed!\nCheck logs for details.",
-            _ => "📊 Checking restore status...\nMonitoring progress...",
+            Some("DONE") => "✅ Restore completed successfully!\nBackup has been applied.".to_string(),
+            Some("RUNNING") => format!(
+                "{} Restore in progress... {}\nPlease wait, this may take several minutes.",
+                spinner_frame(app.restore_flow.operation_started_at),
+                elapsed
+            ),
+            Some("PENDING") => format!("⏳ Restore is pending... {}\nOperation is queued for execution.", elapsed),
+            Some("FAILED") | Some("ERROR") => "❌ Restore failed!\nCheck logs for details.".to_string(),
+            _ => format!("{} Checking restore status... {}\nMonitoring progress...", spinner_frame(app.restore_flow.operation_started_at), elapsed),
         }
     } else if app.restore_flow.target_instance.is_some()
         && app.restore_flow.selected_backup.is_some()
     {
-        "✅ Ready to restore!\nPress Enter to confirm."
+        "✅ Ready to restore!\nPress Enter to confirm.".to_string()
     } else {
-        "Complete source\nselection first."
+        "Complete source\nselection first.".to_string()
     };
 
     let status_style = if let Some(_) = &app.restore_flow.operation_id {

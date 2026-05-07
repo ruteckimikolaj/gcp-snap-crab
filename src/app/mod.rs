@@ -2,6 +2,7 @@ mod backup;
 mod restore;
 
 use anyhow::Result;
+use std::time::Instant;
 
 use crate::gcp::GcpClientTrait;
 use crate::state::create_backup_flow::CreateBackupFlow;
@@ -31,6 +32,7 @@ pub struct App {
     pub create_backup_flow: CreateBackupFlow,
     pub error: Option<String>,
     pub filter_query: String,
+    pub yank_notification: Option<(String, Instant)>,
 }
 
 impl App {
@@ -55,6 +57,7 @@ impl App {
             create_backup_flow: CreateBackupFlow::new(),
             error: None,
             filter_query: String::new(),
+            yank_notification: None,
         }
     }
 

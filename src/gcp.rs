@@ -139,7 +139,8 @@ impl GcpClientTrait for GcpClient {
             .await?;
 
         if !output.status.success() {
-            return Ok(Vec::new()); // Return empty if no backups or error
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow!("Failed to list backups: {}", stderr.trim()));
         }
 
         let stdout = String::from_utf8(output.stdout)?;

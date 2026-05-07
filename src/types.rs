@@ -75,6 +75,7 @@ pub enum AppState {
     ConfirmRestore,
     PerformingRestore,
     Error(String),
+    Quitting,
 
     // States for creating a backup
     SelectingProjectForBackup,
@@ -88,6 +89,7 @@ pub enum AppState {
 pub enum InputMode {
     Normal,
     Editing,
+    Filtering,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

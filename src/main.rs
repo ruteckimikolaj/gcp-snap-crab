@@ -16,7 +16,7 @@ use std::io;
 #[tokio::main]
 async fn main() -> Result<()> {
     let matches = Command::new("GCP SQL Backup Restore")
-        .version("2.0.0")
+        .version(env!("CARGO_PKG_VERSION"))
         .about("Interactive GCP SQL Instance Backup Restore Tool")
         .arg(
             Arg::new("dry-run")

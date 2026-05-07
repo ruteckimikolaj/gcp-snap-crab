@@ -1,49 +1,73 @@
-![Version](https://img.shields.io/badge/version-0.1.0-blue)
+![Version](https://img.shields.io/badge/version-0.2.1-blue)
 ![https://spdx.org/licenses/CC-BY-NC-SA-4.0.json](https://img.shields.io/badge/License-CC%20%7C%20BY--NC--SA%204.0-green)
-![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-blue)
-![Rust Version](https://img.shields.io/badge/rust-1.70.0-blue)
+![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-blue)
+![Rust Version](https://img.shields.io/badge/rust-1.70%2B-blue)
 ![https://crates.io/crates/gcp-snap-crab](https://img.shields.io/crates/v/gcp-snap-crab?color=blue)
-![Homebrew](https://img.shields.io/badge/homebrew-coming%20soon-orange)
 ![GitHub Repo Stars](https://img.shields.io/github/stars/ruteckimikolaj/gcp-snap-crab?style=social)
 
 # 🦀 GCP Snap Crab
 
-A minimalist, terminal-based tool to create and restore Google Cloud Platform (GCP) SQL database backups.
+A minimalist, terminal-based tool to create and restore **Google Cloud SQL** database backups — no browser required.
 
 ## Table of Contents
 
 - [✨ Features](#-features)
 - [Prerequisites](#prerequisites)
 - [📸 Screenshots](#-screenshots)
+- [⌨️ Keyboard Shortcuts](#-keyboard-shortcuts)
 - [📦 Installation](#-installation)
-- [🚀 Special thanks to creators/contributors of used packages](#-special-thanks)
+- [🚀 Special thanks](#-special-thanks)
 - [❤️ Contributing](#-contributing)
 
 ## ✨ Features
 
-- **Create GCE Snapshots**: Create named backups for existing database instances.
-- **Restore GCE Snapshots**: Restore backups to existing database instances. Currently only mysql instances are supported.
-- **Restore GCE Disks**: Create new disks from snapshots. ![in progress](https://img.shields.io/badge/status-in--progress-red)
-- **Restore GKE Clusters**: Restore GKE clusters from backups.![in progress](https://img.shields.io/badge/status-in--progress-red)
+- **Create Cloud SQL backups** — select a project, instance, and backup name through a guided TUI flow.
+- **Restore Cloud SQL backups** — restore a backup from any project/instance to any target project/instance (cross-project restore supported).
+- **Search & filter** — press `/` in any instance or backup list to filter by name; results update live as you type.
+- **Scrollable lists** — instance and backup lists scroll with a visible scrollbar; handles large GCP environments gracefully.
+- **Progress indicator** — animated spinner and elapsed time shown while a restore or backup operation is running.
+- **Copy to clipboard** — press `y` to copy the current backup ID or operation ID to the system clipboard.
+- **Input validation** — project IDs, instance names, and backup names are validated against GCP naming rules before submission.
+- **Manual input** — press `m` to type a project ID, instance name, or backup name directly; useful for projects not listed in your active account.
+- **Dry-run mode** — run with `--dry-run` to simulate the full flow without making any changes to your GCP resources.
+- **Token caching** — GCP access token is cached with a TTL to avoid repeated `gcloud` calls.
 
 ## Prerequisites
 
-Before you begin, ensure you have the following installed and configured:
-
-- [Google Cloud SDK](https://cloud.google.com/sdk/docs/install) (`gcloud`) authenticated to your account.
-- Python 3.8+
-- A GCP project with the necessary APIs enabled (e.g., Compute Engine API).
-- Appropriate IAM permissions to manage the resources you intend to restore (e.g., `roles/compute.instanceAdmin.v1`).
+- [Google Cloud SDK](https://cloud.google.com/sdk/docs/install) (`gcloud`) installed and authenticated (`gcloud auth login` / `gcloud auth application-default login`).
+- A GCP project with **Cloud SQL Admin API** enabled.
+- IAM permissions: `roles/cloudsql.admin` (or equivalent) on both source and target projects.
 
 ## 📸 Screenshots
 
 ![](/assets/all-gif.webp)
 
+## ⌨️ Keyboard Shortcuts
+
+| Key | Action |
+|-----|--------|
+| `↑` / `↓` | Navigate list |
+| `Enter` | Select item / confirm |
+| `Esc` | Go back one step |
+| `/` | Enter search/filter mode (instance & backup lists) |
+| `m` | Manual input (project ID, instance name, backup name) |
+| `y` | Copy highlighted backup ID or active operation ID to clipboard |
+| `r` | Refresh current list or poll operation status |
+| `n` | Start a new operation |
+| `h` | Toggle help screen |
+| `q` | Quit |
+
+**In search mode:**
+
+| Key | Action |
+|-----|--------|
+| Type | Filter the list live |
+| `Enter` or `/` | Exit search, keep filter |
+| `Esc` | Exit search, clear filter |
+
 ## 📦 Installation
 
 ### Using Cargo
-
-If you have the Rust toolchain installed, you can install `gcp-snap-crab` directly from crates.io:
 
 ```sh
 cargo install gcp-snap-crab
@@ -51,32 +75,45 @@ cargo install gcp-snap-crab
 
 ### Using Homebrew (macOS)
 
-*Coming soon! Once the project is published, you will be able to install it with:*
+*Coming soon.*
+
+### From source
 
 ```sh
-brew install gcp-snap-crab
+git clone https://github.com/ruteckimikolaj/gcp-snap-crab
+cd gcp-snap-crab
+cargo build --release
+./target/release/gcp-snap-crab
 ```
 
-## 🚀 Special thanks to creators/contributors of used packages
+### Flags
+
+```
+gcp-snap-crab [OPTIONS]
+
+Options:
+      --dry-run    Simulate operations without making any GCP API changes
+  -h, --help       Print help
+  -V, --version    Print version
+```
+
+## 🚀 Special thanks
 
 - [ratatui](https://github.com/ratatui-org/ratatui)
 - [crossterm](https://github.com/crossterm-rs/crossterm)
-- [serde](https://github.com/serde-rs/serde)
-- [serde_json](https://github.com/serde-rs/serde_json)
+- [tokio](https://github.com/tokio-rs/tokio)
 - [reqwest](https://github.com/seanmonstar/reqwest)
+- [serde](https://github.com/serde-rs/serde) / [serde_json](https://github.com/serde-rs/serde_json)
 - [anyhow](https://github.com/dtolnay/anyhow)
 - [chrono](https://github.com/chronotope/chrono)
 - [clap](https://github.com/clap-rs/clap)
+- [arboard](https://github.com/1Password/arboard)
 
 ## ❤️ Contributing
 
-This is my second project in Rust, and I'm passionate about making it better! I welcome all forms of contributions, from feature suggestions and bug reports to code improvements and pull requests.
+Contributions are welcome — bug reports, feature ideas, and pull requests alike.
 
-If you have ideas on how to improve the code, make it more idiomatic, or enhance its performance, please don't hesitate to open an issue or a pull request. Your feedback is incredibly valuable.
-
-1. **Fork the repository.**
-2. **Create a new branch** (`git checkout -b feature/your-feature-name`).
-3. **Make your changes.**
-4. **Commit your changes** (`git commit -m 'Add some amazing feature'`).
-5. **Push to the branch** (`git push origin feature/your-feature-name`).
-6. **Open a Pull Request.**
+1. Fork the repository.
+2. Create a branch: `git checkout -b feature/your-feature`.
+3. Make your changes and add tests where relevant.
+4. Open a Pull Request describing what changed and why.

@@ -25,7 +25,10 @@ const HIGHLIGHT_BG: Color = Color::Rgb(59, 66, 82);        // Selection backgrou
 const BORDER_COLOR: Color = Color::Rgb(76, 86, 106);       // Inactive borders
 const INPUT_TEXT: Color = Color::Rgb(235, 203, 139);       // Input text - bright and visible
 
-pub async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> Result<()> {
+pub async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> Result<()>
+where
+    <B as Backend>::Error: Send + Sync + 'static,
+{
     app.initialize().await?;
     let mut last_tick = Instant::now();
     let mut last_status_check = Instant::now();

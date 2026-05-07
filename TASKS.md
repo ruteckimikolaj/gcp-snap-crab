@@ -10,7 +10,7 @@
 
 ## UX / New Features
 
-- [ ] **Scrolling in long lists** — no scroll support; lists overflow when project has many instances or backups
+- [x] **Scrolling in long lists** — no scroll support; lists overflow when project has many instances or backups
 - [ ] **Filter / search in lists** — type to filter projects, instances, backups; standard TUI pattern, big win for large GCP environments
 - [ ] **Config file / persisted defaults** — remembered projects are in-memory only; add `~/.config/gcp-snap-crab/config.toml` for default project, instance, etc.
 - [ ] **Copy to clipboard** — press `y` to yank backup ID or operation ID

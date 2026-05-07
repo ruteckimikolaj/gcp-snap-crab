@@ -6,7 +6,8 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{
-        Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap, BorderType
+        Block, Borders, Clear, List, ListItem, ListState, Paragraph, Scrollbar,
+        ScrollbarOrientation, ScrollbarState, Wrap, BorderType
     },
     Frame, Terminal,
 };
@@ -712,7 +713,7 @@ fn render_instance_list(f: &mut Frame, area: Rect, app: &mut App, title: &str) {
             &app.create_backup_flow.instances,
             app.create_backup_flow.selected_instance_index,
         ),
-        None => (&app.restore_flow.instances, 0), // Default or error case
+        None => (&app.restore_flow.instances, 0),
     };
 
     let items: Vec<ListItem> = instances
@@ -747,18 +748,27 @@ fn render_instance_list(f: &mut Frame, area: Rect, app: &mut App, title: &str) {
 
     let mut state = ListState::default();
     state.select(Some(selected_index));
-
     f.render_stateful_widget(list, area, &mut state);
+
+    let mut scrollbar_state = ScrollbarState::new(instances.len()).position(selected_index);
+    f.render_stateful_widget(
+        Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(Some("↑"))
+            .end_symbol(Some("↓")),
+        area,
+        &mut scrollbar_state,
+    );
 }
 
 fn render_backup_list(f: &mut Frame, area: Rect, app: &mut App) {
-    let items: Vec<ListItem> = app
-        .restore_flow
-        .backups
+    let backups = &app.restore_flow.backups;
+    let selected_index = app.restore_flow.selected_backup_index;
+
+    let items: Vec<ListItem> = backups
         .iter()
         .enumerate()
         .map(|(i, backup)| {
-            let style = if i == app.restore_flow.selected_backup_index {
+            let style = if i == selected_index {
                 Style::default()
                     .fg(ACCENT_COLOR)
                     .add_modifier(Modifier::BOLD)
@@ -766,16 +776,12 @@ fn render_backup_list(f: &mut Frame, area: Rect, app: &mut App) {
                 Style::default().fg(BASE_FG)
             };
 
-            // Format the date (without time)
             let date_str = backup
                 .start_time
                 .map(|t| t.format("%Y-%m-%d").to_string())
                 .unwrap_or_else(|| "Unknown".to_string());
 
-            // Create display text with date and backup ID
-            let display_text = format!("  {} | {}", date_str, backup.id);
-
-            ListItem::new(display_text).style(style)
+            ListItem::new(format!("  {} | {}", date_str, backup.id)).style(style)
         })
         .collect();
 
@@ -795,9 +801,17 @@ fn render_backup_list(f: &mut Frame, area: Rect, app: &mut App) {
         .highlight_symbol("► ");
 
     let mut state = ListState::default();
-    state.select(Some(app.restore_flow.selected_backup_index));
-
+    state.select(Some(selected_index));
     f.render_stateful_widget(list, area, &mut state);
+
+    let mut scrollbar_state = ScrollbarState::new(backups.len()).position(selected_index);
+    f.render_stateful_widget(
+        Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(Some("↑"))
+            .end_symbol(Some("↓")),
+        area,
+        &mut scrollbar_state,
+    );
 }
 
 fn render_target_section(f: &mut Frame, area: Rect, app: &mut App) {

@@ -75,6 +75,7 @@ pub enum AppState {
     ConfirmRestore,
     PerformingRestore,
     Error(String),
+    Quitting,
 
     // States for creating a backup
     SelectingProjectForBackup,

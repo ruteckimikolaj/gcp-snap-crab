@@ -75,6 +75,9 @@ where
             last_status_check = Instant::now();
         }
 
+        if matches!(app.state, AppState::Quitting) {
+            break;
+        }
         if matches!(app.state, AppState::Error(_)) && !app.show_help {
             break;
         }
@@ -86,10 +89,7 @@ where
 pub async fn handle_normal_input(app: &mut App, key: KeyCode, modifiers: KeyModifiers) -> Result<()> {
     match key {
         KeyCode::Char('q') => {
-            // In a test environment, we don't want to exit the process.
-            if !cfg!(test) {
-                std::process::exit(0);
-            }
+            app.state = AppState::Quitting;
         }
         KeyCode::Esc => {
             if app.error.is_some() {
@@ -334,6 +334,7 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
         AppState::ConfirmCreateBackup => "Step 4: Confirm Backup Creation",
         AppState::PerformingCreateBackup => "Monitoring Backup Creation...",
         AppState::Error(_) => "Error Occurred",
+        AppState::Quitting => "",
     };
 
     let header_block = Block::default()
@@ -372,6 +373,7 @@ fn render_content(f: &mut Frame, area: Rect, app: &mut App) {
         | AppState::ConfirmCreateBackup
         | AppState::PerformingCreateBackup => render_create_backup_layout(f, area, app),
         AppState::Error(msg) => render_error(f, area, msg),
+        AppState::Quitting => {}
     }
 }
 

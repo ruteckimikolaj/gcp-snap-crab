@@ -4,9 +4,9 @@
 
 - [x] **Token caching** — `get_access_token()` shells out to `gcloud` on every API call; cache with TTL (`src/gcp.rs`)
 - [x] **Silent backup list failure** — returns empty `Vec` instead of propagating error; user sees empty list silently (`gcp.rs:128`)
-- [ ] **Fragile tab-delimited parsing** — `gcloud` output parsed via `split('\t')`; switch to `--format=json` on all `gcloud` calls (`gcp.rs:100`)
-- [ ] **Abrupt exit skips terminal cleanup** — `std::process::exit(0)` bypasses raw mode / alternate screen teardown; break loop and let `main.rs` handle it (`ui.rs:91`)
-- [ ] **Hardcoded version string** — replace `"2.0.0"` with `env!("CARGO_PKG_VERSION")` (`main.rs`)
+- [x] **Fragile tab-delimited parsing** — `gcloud` output parsed via `split('\t')`; switch to `--format=json` on all `gcloud` calls (`gcp.rs:100`)
+- [x] **Abrupt exit skips terminal cleanup** — `std::process::exit(0)` bypasses raw mode / alternate screen teardown; break loop and let `main.rs` handle it (`ui.rs:91`)
+- [x] **Hardcoded version string** — replace `"2.0.0"` with `env!("CARGO_PKG_VERSION")` (`main.rs`)
 
 ## UX / New Features
 

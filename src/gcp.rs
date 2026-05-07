@@ -98,29 +98,28 @@ impl GcpClientTrait for GcpClient {
                 "instances",
                 "list",
                 &format!("--project={}", project_id),
-                "--format=value(name,databaseVersion,region,settings.tier)",
+                "--format=json",
             ])
             .output()
             .await?;
 
         if !output.status.success() {
-            return Err(anyhow!("Failed to list SQL instances"));
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow!("Failed to list SQL instances: {}", stderr.trim()));
         }
 
-        let stdout = String::from_utf8(output.stdout)?;
-        let mut instances = Vec::new();
-
-        for line in stdout.lines() {
-            let parts: Vec<&str> = line.split('\t').collect();
-            if parts.len() >= 4 {
-                instances.push(SqlInstance {
-                    name: parts[0].to_string(),
-                    database_version: parts[1].to_string(),
-                    region: parts[2].to_string(),
-                    tier: parts[3].to_string(),
-                });
-            }
-        }
+        let json: Value = serde_json::from_str(&String::from_utf8(output.stdout)?)?;
+        let instances = json
+            .as_array()
+            .ok_or_else(|| anyhow!("Unexpected response format for SQL instances"))?
+            .iter()
+            .map(|item| SqlInstance {
+                name: item["name"].as_str().unwrap_or("").to_string(),
+                database_version: item["databaseVersion"].as_str().unwrap_or("").to_string(),
+                region: item["region"].as_str().unwrap_or("").to_string(),
+                tier: item["settings"]["tier"].as_str().unwrap_or("").to_string(),
+            })
+            .collect();
 
         Ok(instances)
     }
@@ -133,7 +132,7 @@ impl GcpClientTrait for GcpClient {
                 "list",
                 &format!("--instance={}", instance_id),
                 &format!("--project={}", project_id),
-                "--format=value(id,startTime,type,status)",
+                "--format=json",
             ])
             .output()
             .await?;
@@ -143,26 +142,28 @@ impl GcpClientTrait for GcpClient {
             return Err(anyhow!("Failed to list backups: {}", stderr.trim()));
         }
 
-        let stdout = String::from_utf8(output.stdout)?;
-        let mut backups = Vec::new();
-
-        for line in stdout.lines() {
-            let parts: Vec<&str> = line.split('\t').collect();
-            if parts.len() >= 4 {
-                let start_time = if !parts[1].is_empty() {
-                    parts[1].parse::<DateTime<Utc>>().ok()
-                } else {
-                    None
-                };
-
-                backups.push(Backup {
-                    id: parts[0].to_string(),
+        let json: Value = serde_json::from_str(&String::from_utf8(output.stdout)?)?;
+        let backups = json
+            .as_array()
+            .ok_or_else(|| anyhow!("Unexpected response format for backups"))?
+            .iter()
+            .map(|item| {
+                let start_time = item["startTime"]
+                    .as_str()
+                    .and_then(|s| s.parse::<DateTime<Utc>>().ok());
+                let id = item["id"]
+                    .as_u64()
+                    .map(|n| n.to_string())
+                    .or_else(|| item["id"].as_str().map(|s| s.to_string()))
+                    .unwrap_or_default();
+                Backup {
+                    id,
                     start_time,
-                    backup_type: parts[2].to_string(),
-                    status: parts[3].to_string(),
-                });
-            }
-        }
+                    backup_type: item["type"].as_str().unwrap_or("").to_string(),
+                    status: item["status"].as_str().unwrap_or("").to_string(),
+                }
+            })
+            .collect();
 
         Ok(backups)
     }

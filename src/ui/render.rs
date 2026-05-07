@@ -342,9 +342,9 @@ fn render_target_section(f: &mut Frame, area: Rect, app: &mut App) {
         && !app.restore_flow.instances.is_empty()
         && app.restore_flow.target_instance.is_none();
     let constraints: &[Constraint] = if instance_is_list {
-        &[Constraint::Length(3), Constraint::Min(0), Constraint::Length(5)]
+        &[Constraint::Length(3), Constraint::Min(0), Constraint::Length(3)]
     } else {
-        &[Constraint::Length(3), Constraint::Length(3), Constraint::Min(0)]
+        &[Constraint::Length(3), Constraint::Length(3), Constraint::Length(3)]
     };
     let target_chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -376,22 +376,22 @@ fn render_target_section(f: &mut Frame, area: Rect, app: &mut App) {
     let status_content = if let Some(_operation_id) = &app.restore_flow.operation_id {
         let elapsed = format_elapsed(app.restore_flow.operation_started_at);
         match app.restore_flow.status.as_deref() {
-            Some("DONE") => "✅ Restore completed successfully!\nBackup has been applied.".to_string(),
+            Some("DONE") => "✅ Restore complete!".to_string(),
             Some("RUNNING") => format!(
-                "{} Restore in progress... {}\nPlease wait, this may take several minutes.",
+                "{} Restoring... {}",
                 spinner_frame(app.restore_flow.operation_started_at),
                 elapsed
             ),
-            Some("PENDING") => format!("⏳ Restore is pending... {}\nOperation is queued for execution.", elapsed),
-            Some("FAILED") | Some("ERROR") => "❌ Restore failed!\nCheck logs for details.".to_string(),
-            _ => format!("{} Checking restore status... {}\nMonitoring progress...", spinner_frame(app.restore_flow.operation_started_at), elapsed),
+            Some("PENDING") => format!("⏳ Pending... {}", elapsed),
+            Some("FAILED") | Some("ERROR") => "❌ Restore failed!".to_string(),
+            _ => format!("{} Checking... {}", spinner_frame(app.restore_flow.operation_started_at), elapsed),
         }
     } else if app.restore_flow.target_instance.is_some()
         && app.restore_flow.selected_backup.is_some()
     {
-        "✅ Ready to restore!\nPress Enter to confirm.".to_string()
+        "✅ Ready — press Enter".to_string()
     } else {
-        "Complete source\nselection first.".to_string()
+        "Select source first.".to_string()
     };
 
     let status_style = if let Some(_) = &app.restore_flow.operation_id {

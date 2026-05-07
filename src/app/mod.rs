@@ -254,8 +254,14 @@ impl App {
                 };
                 self.operation_mode = Some(selected_mode);
                 match selected_mode {
-                    OperationMode::Restore => self.state = AppState::SelectingSourceProject,
-                    OperationMode::CreateBackup => self.state = AppState::SelectingProjectForBackup,
+                    OperationMode::Restore => {
+                        self.restore_flow = RestoreFlow::new();
+                        self.state = AppState::SelectingSourceProject;
+                    }
+                    OperationMode::CreateBackup => {
+                        self.create_backup_flow = CreateBackupFlow::new();
+                        self.state = AppState::SelectingProjectForBackup;
+                    }
                 }
                 self.load_projects().await?;
             }

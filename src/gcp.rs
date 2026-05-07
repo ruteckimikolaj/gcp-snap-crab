@@ -3,7 +3,9 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use reqwest::Client;
 use serde_json::Value;
+use std::time::{Duration, Instant};
 use tokio::process::Command as AsyncCommand;
+use tokio::sync::Mutex;
 
 use crate::types::{
     Backup, CreateBackupConfig, GcpApiResponse, Operation, RestoreRequest, SqlInstance,
@@ -27,16 +29,26 @@ pub trait GcpClientTrait: Send + Sync {
 
 pub struct GcpClient {
     client: Client,
+    token_cache: Mutex<Option<(String, Instant)>>,
 }
 
 impl GcpClient {
     pub fn new() -> Self {
         Self {
             client: Client::new(),
+            token_cache: Mutex::new(None),
         }
     }
 
     async fn get_access_token(&self) -> Result<String> {
+        const TOKEN_TTL: Duration = Duration::from_secs(55 * 60);
+        let mut cache = self.token_cache.lock().await;
+        if let Some((token, fetched_at)) = &*cache {
+            if fetched_at.elapsed() < TOKEN_TTL {
+                return Ok(token.clone());
+            }
+        }
+
         let output = AsyncCommand::new("gcloud")
             .args(&["auth", "print-access-token"])
             .output()
@@ -46,7 +58,9 @@ impl GcpClient {
             return Err(anyhow!("Failed to get access token"));
         }
 
-        Ok(String::from_utf8(output.stdout)?.trim().to_string())
+        let token = String::from_utf8(output.stdout)?.trim().to_string();
+        *cache = Some((token.clone(), Instant::now()));
+        Ok(token)
     }
 }
 

@@ -27,6 +27,7 @@ pub struct App {
     pub restore_flow: RestoreFlow,
     pub create_backup_flow: CreateBackupFlow,
     pub error: Option<String>,
+    pub filter_query: String,
 }
 
 impl App {
@@ -50,6 +51,60 @@ impl App {
             restore_flow: RestoreFlow::new(),
             create_backup_flow: CreateBackupFlow::new(),
             error: None,
+            filter_query: String::new(),
+        }
+    }
+
+    pub async fn select_project(&mut self, project: String) -> Result<()> {
+        if !self.remembered_projects.contains(&project) {
+            self.remembered_projects.push(project.clone());
+        }
+        self.filter_query.clear();
+        match self.state {
+            AppState::SelectingSourceProject => {
+                self.restore_flow.source_project = Some(project.clone());
+                self.state = AppState::SelectingSourceInstance;
+            }
+            AppState::SelectingProjectForBackup => {
+                self.create_backup_flow.project = Some(project.clone());
+                self.state = AppState::SelectingInstanceForBackup;
+            }
+            AppState::SelectingTargetProject => {
+                self.restore_flow.target_project = Some(project.clone());
+                self.state = AppState::SelectingTargetInstance;
+            }
+            _ => return Ok(()),
+        }
+        self.load_instances(&project).await?;
+        Ok(())
+    }
+
+    pub fn filtered_instances(&self) -> Vec<&SqlInstance> {
+        let instances = match self.operation_mode {
+            Some(OperationMode::Restore) => &self.restore_flow.instances,
+            Some(OperationMode::CreateBackup) => &self.create_backup_flow.instances,
+            None => &self.restore_flow.instances,
+        };
+        if self.filter_query.is_empty() {
+            instances.iter().collect()
+        } else {
+            let q = self.filter_query.to_lowercase();
+            instances.iter().filter(|i| i.name.to_lowercase().contains(&q)).collect()
+        }
+    }
+
+    pub fn filtered_backups(&self) -> Vec<&Backup> {
+        if self.filter_query.is_empty() {
+            self.restore_flow.backups.iter().collect()
+        } else {
+            let q = self.filter_query.to_lowercase();
+            self.restore_flow.backups.iter().filter(|b| {
+                b.id.to_lowercase().contains(&q)
+                    || b.start_time
+                        .map(|t| t.format("%Y-%m-%d").to_string())
+                        .unwrap_or_default()
+                        .contains(&q)
+            }).collect()
         }
     }
 
@@ -266,9 +321,6 @@ impl App {
                     self.selected_operation_index -= 1;
                 }
             }
-            AppState::SelectingSourceProject
-            | AppState::SelectingTargetProject
-            | AppState::SelectingProjectForBackup => {}
             AppState::SelectingSourceInstance | AppState::SelectingTargetInstance => {
                 if self.restore_flow.selected_instance_index > 0 {
                     self.restore_flow.selected_instance_index -= 1;
@@ -295,27 +347,21 @@ impl App {
                     self.selected_operation_index += 1;
                 }
             }
-            AppState::SelectingSourceProject
-            | AppState::SelectingTargetProject
-            | AppState::SelectingProjectForBackup => {}
             AppState::SelectingSourceInstance | AppState::SelectingTargetInstance => {
-                if self.restore_flow.selected_instance_index
-                    < self.restore_flow.instances.len().saturating_sub(1)
-                {
+                let max = self.filtered_instances().len().saturating_sub(1);
+                if self.restore_flow.selected_instance_index < max {
                     self.restore_flow.selected_instance_index += 1;
                 }
             }
             AppState::SelectingInstanceForBackup => {
-                if self.create_backup_flow.selected_instance_index
-                    < self.create_backup_flow.instances.len().saturating_sub(1)
-                {
+                let max = self.filtered_instances().len().saturating_sub(1);
+                if self.create_backup_flow.selected_instance_index < max {
                     self.create_backup_flow.selected_instance_index += 1;
                 }
             }
             AppState::SelectingBackup => {
-                if self.restore_flow.selected_backup_index
-                    < self.restore_flow.backups.len().saturating_sub(1)
-                {
+                let max = self.filtered_backups().len().saturating_sub(1);
+                if self.restore_flow.selected_backup_index < max {
                     self.restore_flow.selected_backup_index += 1;
                 }
             }
@@ -339,42 +385,45 @@ impl App {
                 self.load_projects().await?;
             }
             AppState::SelectingSourceProject | AppState::SelectingProjectForBackup => {
-                self.start_manual_input("source_project");
+                self.load_projects().await?;
             }
             AppState::SelectingSourceInstance => {
-                if let Some(instance) = self
-                    .restore_flow
-                    .instances
+                let name = self
+                    .filtered_instances()
                     .get(self.restore_flow.selected_instance_index)
-                    .cloned()
-                {
-                    self.restore_flow.source_instance = Some(instance.name.clone());
+                    .map(|i| i.name.clone());
+                if let Some(instance_name) = name {
+                    self.filter_query.clear();
+                    self.restore_flow.selected_instance_index = 0;
+                    self.restore_flow.source_instance = Some(instance_name.clone());
                     if let Some(project) = &self.restore_flow.source_project.clone() {
                         self.state = AppState::SelectingBackup;
-                        self.load_backups(project, &instance.name).await?;
+                        self.load_backups(project, &instance_name).await?;
                     }
                 }
             }
             AppState::SelectingInstanceForBackup => {
-                if let Some(instance) = self
-                    .create_backup_flow
-                    .instances
+                let name = self
+                    .filtered_instances()
                     .get(self.create_backup_flow.selected_instance_index)
-                    .cloned()
-                {
-                    self.create_backup_flow.instance = Some(instance.name.clone());
+                    .map(|i| i.name.clone());
+                if let Some(instance_name) = name {
+                    self.filter_query.clear();
+                    self.create_backup_flow.selected_instance_index = 0;
+                    self.create_backup_flow.instance = Some(instance_name);
                     self.state = AppState::EnteringBackupName;
                     self.start_manual_input("backup_name");
                 }
             }
             AppState::SelectingBackup => {
-                if let Some(backup) = self
-                    .restore_flow
-                    .backups
+                let backup_id = self
+                    .filtered_backups()
                     .get(self.restore_flow.selected_backup_index)
-                    .cloned()
-                {
-                    self.restore_flow.selected_backup = Some(backup.id.clone());
+                    .map(|b| b.id.clone());
+                if let Some(id) = backup_id {
+                    self.filter_query.clear();
+                    self.restore_flow.selected_backup_index = 0;
+                    self.restore_flow.selected_backup = Some(id);
                     self.state = AppState::SelectingTargetProject;
                 }
             }
@@ -382,13 +431,14 @@ impl App {
                 self.start_manual_input("target_project");
             }
             AppState::SelectingTargetInstance => {
-                if let Some(instance) = self
-                    .restore_flow
-                    .instances
+                let name = self
+                    .filtered_instances()
                     .get(self.restore_flow.selected_instance_index)
-                    .cloned()
-                {
-                    self.restore_flow.target_instance = Some(instance.name.clone());
+                    .map(|i| i.name.clone());
+                if let Some(instance_name) = name {
+                    self.filter_query.clear();
+                    self.restore_flow.selected_instance_index = 0;
+                    self.restore_flow.target_instance = Some(instance_name);
                     self.create_restore_config();
                     self.state = AppState::ConfirmRestore;
                 }

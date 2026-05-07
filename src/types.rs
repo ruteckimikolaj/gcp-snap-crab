@@ -89,6 +89,7 @@ pub enum AppState {
 pub enum InputMode {
     Normal,
     Editing,
+    Filtering,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

@@ -6,8 +6,8 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{
-        Block, Borders, Clear, List, ListItem, ListState, Paragraph, Scrollbar,
-        ScrollbarOrientation, ScrollbarState, Wrap, BorderType
+        Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Scrollbar,
+        ScrollbarOrientation, ScrollbarState, Wrap,
     },
     Frame, Terminal,
 };
@@ -17,14 +17,14 @@ use crate::app::App;
 use crate::types::{AppState, InputMode, OperationMode};
 
 // Clean color palette for better visibility and modern look
-const BASE_FG: Color = Color::Rgb(216, 222, 233);          // Main text
-const BASE_BG: Color = Color::Rgb(46, 52, 64);             // Background
-const ACCENT_COLOR: Color = Color::Rgb(136, 192, 208);     // Primary accent
-const SUCCESS_COLOR: Color = Color::Rgb(163, 190, 140);    // Success/green
-const WARNING_COLOR: Color = Color::Rgb(235, 203, 139);    // Warning/yellow
-const HIGHLIGHT_BG: Color = Color::Rgb(59, 66, 82);        // Selection background
-const BORDER_COLOR: Color = Color::Rgb(76, 86, 106);       // Inactive borders
-const INPUT_TEXT: Color = Color::Rgb(235, 203, 139);       // Input text - bright and visible
+const BASE_FG: Color = Color::Rgb(216, 222, 233); // Main text
+const BASE_BG: Color = Color::Rgb(46, 52, 64); // Background
+const ACCENT_COLOR: Color = Color::Rgb(136, 192, 208); // Primary accent
+const SUCCESS_COLOR: Color = Color::Rgb(163, 190, 140); // Success/green
+const WARNING_COLOR: Color = Color::Rgb(235, 203, 139); // Warning/yellow
+const HIGHLIGHT_BG: Color = Color::Rgb(59, 66, 82); // Selection background
+const BORDER_COLOR: Color = Color::Rgb(76, 86, 106); // Inactive borders
+const INPUT_TEXT: Color = Color::Rgb(235, 203, 139); // Input text - bright and visible
 
 pub async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> Result<()>
 where
@@ -57,6 +57,9 @@ where
                         InputMode::Editing => {
                             handle_edit_input(&mut app, key.code).await?;
                         }
+                        InputMode::Filtering => {
+                            handle_filter_input(&mut app, key.code).await?;
+                        }
                     }
                 }
             }
@@ -87,7 +90,11 @@ where
     Ok(())
 }
 
-pub async fn handle_normal_input(app: &mut App, key: KeyCode, modifiers: KeyModifiers) -> Result<()> {
+pub async fn handle_normal_input(
+    app: &mut App,
+    key: KeyCode,
+    modifiers: KeyModifiers,
+) -> Result<()> {
     match key {
         KeyCode::Char('q') => {
             app.state = AppState::Quitting;
@@ -151,6 +158,19 @@ pub async fn handle_normal_input(app: &mut App, key: KeyCode, modifiers: KeyModi
                     _ => {
                         app.state = AppState::SelectingOperation;
                     }
+                }
+            }
+        }
+        KeyCode::Char('/') => {
+            if app.input_mode != InputMode::Filtering {
+                match app.state {
+                    AppState::SelectingSourceInstance
+                    | AppState::SelectingTargetInstance
+                    | AppState::SelectingInstanceForBackup
+                    | AppState::SelectingBackup => {
+                        app.input_mode = InputMode::Filtering;
+                    }
+                    _ => {}
                 }
             }
         }
@@ -245,6 +265,34 @@ pub async fn handle_edit_input(app: &mut App, key: KeyCode) -> Result<()> {
             } else {
                 app.input_buffer.pop();
             }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+pub async fn handle_filter_input(app: &mut App, key: KeyCode) -> Result<()> {
+    match key {
+        KeyCode::Esc | KeyCode::Enter | KeyCode::Char('/') => {
+            app.input_mode = InputMode::Normal;
+            if matches!(key, KeyCode::Esc) {
+                app.filter_query.clear();
+                app.restore_flow.selected_instance_index = 0;
+                app.create_backup_flow.selected_instance_index = 0;
+                app.restore_flow.selected_backup_index = 0;
+            }
+        }
+        KeyCode::Char(c) => {
+            app.filter_query.push(c);
+            app.restore_flow.selected_instance_index = 0;
+            app.create_backup_flow.selected_instance_index = 0;
+            app.restore_flow.selected_backup_index = 0;
+        }
+        KeyCode::Backspace => {
+            app.filter_query.pop();
+            app.restore_flow.selected_instance_index = 0;
+            app.create_backup_flow.selected_instance_index = 0;
+            app.restore_flow.selected_backup_index = 0;
         }
         _ => {}
     }
@@ -704,17 +752,16 @@ fn render_source_section(f: &mut Frame, area: Rect, app: &mut App) {
 }
 
 fn render_instance_list(f: &mut Frame, area: Rect, app: &mut App, title: &str) {
-    let (instances, selected_index) = match app.operation_mode {
-        Some(OperationMode::Restore) => (
-            &app.restore_flow.instances,
-            app.restore_flow.selected_instance_index,
-        ),
-        Some(OperationMode::CreateBackup) => (
-            &app.create_backup_flow.instances,
-            app.create_backup_flow.selected_instance_index,
-        ),
-        None => (&app.restore_flow.instances, 0),
+    let is_filtering = app.input_mode == InputMode::Filtering;
+    let list_area = area;
+
+    let selected_index = match app.operation_mode {
+        Some(OperationMode::Restore) => app.restore_flow.selected_instance_index,
+        Some(OperationMode::CreateBackup) => app.create_backup_flow.selected_instance_index,
+        None => 0,
     };
+    let instances = app.filtered_instances();
+    let total = instances.len();
 
     let items: Vec<ListItem> = instances
         .iter()
@@ -731,12 +778,18 @@ fn render_instance_list(f: &mut Frame, area: Rect, app: &mut App, title: &str) {
         })
         .collect();
 
+    let block_title = if is_filtering {
+        format!("{} — {} match(es)", title, total)
+    } else {
+        format!("{} — [/] to search", title)
+    };
+
     let list = List::new(items)
         .block(
             Block::default()
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .title(title)
+                .title(block_title)
                 .style(Style::default().fg(ACCENT_COLOR)),
         )
         .highlight_style(
@@ -748,21 +801,25 @@ fn render_instance_list(f: &mut Frame, area: Rect, app: &mut App, title: &str) {
 
     let mut state = ListState::default();
     state.select(Some(selected_index));
-    f.render_stateful_widget(list, area, &mut state);
+    f.render_stateful_widget(list, list_area, &mut state);
 
-    let mut scrollbar_state = ScrollbarState::new(instances.len()).position(selected_index);
+    let mut scrollbar_state = ScrollbarState::new(total).position(selected_index);
     f.render_stateful_widget(
         Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .begin_symbol(Some("↑"))
             .end_symbol(Some("↓")),
-        area,
+        list_area,
         &mut scrollbar_state,
     );
 }
 
 fn render_backup_list(f: &mut Frame, area: Rect, app: &mut App) {
-    let backups = &app.restore_flow.backups;
+    let is_filtering = app.input_mode == InputMode::Filtering;
+    let list_area = area;
+
     let selected_index = app.restore_flow.selected_backup_index;
+    let backups = app.filtered_backups();
+    let total = backups.len();
 
     let items: Vec<ListItem> = backups
         .iter()
@@ -775,22 +832,26 @@ fn render_backup_list(f: &mut Frame, area: Rect, app: &mut App) {
             } else {
                 Style::default().fg(BASE_FG)
             };
-
             let date_str = backup
                 .start_time
                 .map(|t| t.format("%Y-%m-%d").to_string())
                 .unwrap_or_else(|| "Unknown".to_string());
-
             ListItem::new(format!("  {} | {}", date_str, backup.id)).style(style)
         })
         .collect();
+
+    let block_title = if is_filtering {
+        format!("Source Backup — {} match(es)", total)
+    } else {
+        "Source Backup — [/] to search".to_string()
+    };
 
     let list = List::new(items)
         .block(
             Block::default()
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .title("Source Backup")
+                .title(block_title)
                 .style(Style::default().fg(ACCENT_COLOR)),
         )
         .highlight_style(
@@ -802,14 +863,14 @@ fn render_backup_list(f: &mut Frame, area: Rect, app: &mut App) {
 
     let mut state = ListState::default();
     state.select(Some(selected_index));
-    f.render_stateful_widget(list, area, &mut state);
+    f.render_stateful_widget(list, list_area, &mut state);
 
-    let mut scrollbar_state = ScrollbarState::new(backups.len()).position(selected_index);
+    let mut scrollbar_state = ScrollbarState::new(total).position(selected_index);
     f.render_stateful_widget(
         Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .begin_symbol(Some("↑"))
             .end_symbol(Some("↓")),
-        area,
+        list_area,
         &mut scrollbar_state,
     );
 }
@@ -1021,55 +1082,20 @@ fn render_loading(f: &mut Frame, area: Rect, message: &str) {
     f.render_widget(loading, area);
 }
 
-fn render_project_selection(f: &mut Frame, area: Rect, app: &App, title: &str) {
-    let block = Block::default()
-        .title(title)
-        .title_alignment(Alignment::Center)
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .style(Style::default().fg(BASE_FG).bg(BASE_BG));
-
-    let content = vec![
-        Line::from(""),
-        Line::from(Span::styled(
-            "Manual Project ID Entry",
-            Style::default()
-                .fg(ACCENT_COLOR)
-                .add_modifier(Modifier::BOLD),
-        )),
-        Line::from(""),
-        Line::from("Enter your GCP project ID manually"),
-        Line::from("for security and flexibility."),
-        Line::from(""),
-        Line::from(Span::styled(
-            "Press [Enter] to open input",
-            Style::default().fg(INPUT_TEXT),
-        )),
-    ];
-
-    if !app.remembered_projects.is_empty() {
-        let recent_text = format!("Recent: {}", app.remembered_projects.join(", "));
-        let content_with_recent = [
-            content,
-            vec![
-                Line::from(""),
-                Line::from(Span::styled(recent_text, Style::default().fg(BORDER_COLOR))),
-            ],
-        ]
-        .concat();
-
-        let paragraph = Paragraph::new(content_with_recent)
-            .block(block)
-            .alignment(Alignment::Center)
-            .wrap(Wrap { trim: true });
-        f.render_widget(paragraph, area);
-    } else {
-        let paragraph = Paragraph::new(content)
-            .block(block)
-            .alignment(Alignment::Center)
-            .wrap(Wrap { trim: true });
-        f.render_widget(paragraph, area);
-    }
+fn render_search_bar(f: &mut Frame, area: Rect, query: &str) {
+    let text = format!(" {}█", query);
+    f.render_widget(
+        Paragraph::new(text)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .title(" SEARCH MODE — type to filter · ESC cancel · ENTER confirm · / exit ")
+                    .style(Style::default().fg(WARNING_COLOR)),
+            )
+            .style(Style::default().fg(INPUT_TEXT)),
+        area,
+    );
 }
 
 fn render_error(f: &mut Frame, area: Rect, error_msg: &str) {
@@ -1097,18 +1123,25 @@ fn render_error(f: &mut Frame, area: Rect, error_msg: &str) {
 }
 
 fn render_footer(f: &mut Frame, area: Rect, app: &App) {
+    if app.input_mode == InputMode::Filtering {
+        render_search_bar(f, area, &app.filter_query);
+        return;
+    }
+
     let help_text = if app.manual_input_active {
         " [Enter] Confirm | [Esc] Cancel "
     } else {
         match app.state {
-            AppState::SelectingOperation => " [↑/↓] Navigate | [Enter] Select | [h] Help | [q] Quit ",
+            AppState::SelectingOperation => {
+                " [↑/↓] Navigate | [Enter] Select | [h] Help | [q] Quit "
+            }
             _ => {
                 if app.restore_flow.operation_id.is_some()
                     || app.create_backup_flow.operation_id.is_some()
                 {
                     " [↑/↓] Navigate | [Enter] Select | [Esc] Back | [r] Refresh | [n] New | [h] Help | [q] Quit "
                 } else {
-                    " [↑/↓] Navigate | [Enter] Select | [Esc] Back | [r] Refresh | [h] Help | [q] Quit "
+                    " [↑/↓] Navigate | [Enter] Select | [Esc] Back | [r] Refresh | [/] Search | [h] Help | [q] Quit "
                 }
             }
         }
@@ -1140,9 +1173,7 @@ fn render_restore_warning_popup(f: &mut Frame, app: &App) {
             .borders(Borders::ALL)
             .border_type(BorderType::Double)
             .style(
-                Style::default()
-                    .fg(Color::White)
-                    .bg(Color::Rgb(139, 0, 0)), // Dark red background
+                Style::default().fg(Color::White).bg(Color::Rgb(139, 0, 0)), // Dark red background
             );
 
         f.render_widget(warning_block, popup_area);
@@ -1598,4 +1629,3 @@ fn render_manual_input_popup(f: &mut Frame, app: &App) {
         f.render_widget(help, chunks[1]);
     }
 }
-

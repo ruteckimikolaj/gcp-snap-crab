@@ -24,5 +24,5 @@
 - [x] **Duplicate render functions** — extracted `render_step_box` helper; eliminated ~200 lines of repeated project/instance/backup box rendering across source, target, and backup flows
 - [x] **Missing input validation** — `src/validation.rs` added; project IDs (6–30 chars, lowercase, letter-start, no trailing hyphen), instance names (1–98 chars), backup names (1–63 chars, alphanumeric/hyphen/underscore) validated in `finish_manual_input`
 - [x] **Use `--format=json` for all `gcloud` commands** — makes all parsing robust and locale-independent; done for all list commands
-- [ ] **Split `ui.rs` into modules** — 1631 lines; split into `ui/mod.rs` (run_app + input handlers), `ui/render.rs` (section renderers), `ui/popups.rs` (popup renderers), `ui/widgets.rs` (reusable leaf widgets)
+- [x] **Split `ui.rs` into modules** — split into `ui/mod.rs` (run_app + input handlers), `ui/render.rs` (section renderers), `ui/popups.rs` (popup renderers), `ui/widgets.rs` (reusable leaf widgets)
 - [ ] **Split `app.rs` into modules** — 593 lines; extract flow logic into `app/restore.rs` and `app/backup.rs`, keep `app/mod.rs` as thin coordinator

@@ -7,6 +7,7 @@ use crate::types::{
     AppState, Backup, CreateBackupConfig, InputMode, OperationMode, RestoreConfig,
     RestoreRequest, RestoreBackupContext, SqlInstance,
 };
+use crate::validation::{validate_backup_name, validate_instance_name, validate_project_id};
 
 pub struct App {
     pub operation_mode: Option<OperationMode>,
@@ -262,6 +263,16 @@ impl App {
         Ok(())
     }
 
+    async fn poll_operation(&mut self, project: &str, operation_id: &str) -> Option<String> {
+        match self.gcp_client.get_operation_status(project, operation_id).await {
+            Ok(op) => Some(op.status),
+            Err(e) => {
+                self.error = Some(format!("Failed to check operation status: {}", e));
+                None
+            }
+        }
+    }
+
     pub async fn check_restore_status(&mut self) -> Result<()> {
         if let (Some(operation_id), Some(config)) = (
             &self.restore_flow.operation_id.clone(),
@@ -271,18 +282,8 @@ impl App {
                 self.restore_flow.status = Some("DONE".to_string());
                 return Ok(());
             }
-
-            match self
-                .gcp_client
-                .get_operation_status(&config.target_project, operation_id)
-                .await
-            {
-                Ok(operation) => {
-                    self.restore_flow.status = Some(operation.status.clone());
-                }
-                Err(e) => {
-                    self.error = Some(format!("Failed to check restore status: {}", e));
-                }
+            if let Some(status) = self.poll_operation(&config.target_project, operation_id).await {
+                self.restore_flow.status = Some(status);
             }
         }
         Ok(())
@@ -297,18 +298,8 @@ impl App {
                 self.create_backup_flow.status = Some("DONE".to_string());
                 return Ok(());
             }
-
-            match self
-                .gcp_client
-                .get_operation_status(&config.project, operation_id)
-                .await
-            {
-                Ok(operation) => {
-                    self.create_backup_flow.status = Some(operation.status.clone());
-                }
-                Err(e) => {
-                    self.error = Some(format!("Failed to check backup status: {}", e));
-                }
+            if let Some(status) = self.poll_operation(&config.project, operation_id).await {
+                self.create_backup_flow.status = Some(status);
             }
         }
         Ok(())
@@ -508,6 +499,10 @@ impl App {
         if !input_value.is_empty() {
             match self.manual_input_type.as_str() {
                 "source_project" => {
+                    if let Err(e) = validate_project_id(&input_value) {
+                        self.error = Some(format!("Invalid project ID: {}. Press ESC to clear.", e));
+                        return Ok(());
+                    }
                     if !self.remembered_projects.contains(&input_value) {
                         self.remembered_projects.push(input_value.clone());
                     }
@@ -527,6 +522,10 @@ impl App {
                     self.load_instances(&input_value).await?;
                 }
                 "target_project" => {
+                    if let Err(e) = validate_project_id(&input_value) {
+                        self.error = Some(format!("Invalid project ID: {}. Press ESC to clear.", e));
+                        return Ok(());
+                    }
                     if !self.remembered_projects.contains(&input_value) {
                         self.remembered_projects.push(input_value.clone());
                     }
@@ -537,6 +536,10 @@ impl App {
                     self.load_instances(&input_value).await?;
                 }
                 "instance" => {
+                    if let Err(e) = validate_instance_name(&input_value) {
+                        self.error = Some(format!("Invalid instance name: {}. Press ESC to clear.", e));
+                        return Ok(());
+                    }
                     if !self.remembered_instances.contains(&input_value) {
                         self.remembered_instances.push(input_value.clone());
                     }
@@ -571,6 +574,10 @@ impl App {
                     self.restore_flow.selected_backup_index = self.restore_flow.backups.len() - 1;
                 }
                 "backup_name" => {
+                    if let Err(e) = validate_backup_name(&input_value) {
+                        self.error = Some(format!("Invalid backup name: {}. Press ESC to clear.", e));
+                        return Ok(());
+                    }
                     self.manual_input_active = false;
                     self.input_mode = InputMode::Normal;
                     self.create_backup_config(input_value);

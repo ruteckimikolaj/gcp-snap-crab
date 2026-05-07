@@ -93,7 +93,7 @@ where
 pub async fn handle_normal_input(
     app: &mut App,
     key: KeyCode,
-    modifiers: KeyModifiers,
+    _modifiers: KeyModifiers,
 ) -> Result<()> {
     match key {
         KeyCode::Char('q') => {
@@ -449,35 +449,9 @@ fn render_create_backup_layout(f: &mut Frame, area: Rect, app: &mut App) {
 }
 
 fn render_backup_project_selection(f: &mut Frame, area: Rect, app: &mut App) {
-    let project_style = if matches!(app.state, AppState::SelectingProjectForBackup) {
-        Style::default().fg(ACCENT_COLOR)
-    } else if app.create_backup_flow.project.is_some() {
-        Style::default().fg(SUCCESS_COLOR)
-    } else {
-        Style::default().fg(BORDER_COLOR)
-    };
-
-    let project_content = if let Some(project) = &app.create_backup_flow.project {
-        format!("✓ {}", project)
-    } else if matches!(app.state, AppState::SelectingProjectForBackup) {
-        "→ Press Enter to select...".to_string()
-    } else {
-        "Pending...".to_string()
-    };
-
-    f.render_widget(
-        Paragraph::new(project_content)
-            .block(
-                Block::default()
-                    .title("Project to Backup")
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
-                    .style(project_style),
-            )
-            .alignment(Alignment::Center)
-            .wrap(Wrap { trim: true }),
-        area,
-    );
+    let hint = matches!(app.state, AppState::SelectingProjectForBackup)
+        .then_some("→ Press Enter to select...");
+    render_step_box(f, area, "Project to Backup", app.create_backup_flow.project.as_deref(), hint);
 }
 
 fn render_backup_instance_selection(f: &mut Frame, area: Rect, app: &mut App) {
@@ -487,76 +461,20 @@ fn render_backup_instance_selection(f: &mut Frame, area: Rect, app: &mut App) {
     {
         render_instance_list(f, area, app, "Instance to Backup");
     } else {
-        let instance_style = if matches!(app.state, AppState::SelectingInstanceForBackup)
-            && app.create_backup_flow.instance.is_none()
-        {
-            Style::default().fg(ACCENT_COLOR)
-        } else if app.create_backup_flow.instance.is_some() {
-            Style::default().fg(SUCCESS_COLOR)
-        } else {
-            Style::default().fg(BORDER_COLOR)
-        };
-
-        let instance_content = if let Some(instance) = &app.create_backup_flow.instance {
-            format!("✓ {}", instance)
-        } else if matches!(app.state, AppState::SelectingInstanceForBackup) {
-            if app.loading {
-                "→ Loading instances...".to_string()
-            } else if app.create_backup_flow.instances.is_empty() {
-                "→ No instances found".to_string()
-            } else {
-                "→ Select instance...".to_string()
-            }
-        } else {
-            "Pending...".to_string()
-        };
-
-        f.render_widget(
-            Paragraph::new(instance_content)
-                .block(
-                    Block::default()
-                        .title("Instance to Backup")
-                        .borders(Borders::ALL)
-                        .border_type(BorderType::Rounded)
-                        .style(instance_style),
-                )
-                .alignment(Alignment::Center)
-                .wrap(Wrap { trim: true }),
-            area,
-        );
+        let inst_hint = matches!(app.state, AppState::SelectingInstanceForBackup).then(|| {
+            if app.loading { "→ Loading instances..." }
+            else if app.create_backup_flow.instances.is_empty() { "→ No instances found" }
+            else { "→ Select instance..." }
+        });
+        render_step_box(f, area, "Instance to Backup", app.create_backup_flow.instance.as_deref(), inst_hint);
     }
 }
 
 fn render_backup_name_input(f: &mut Frame, area: Rect, app: &mut App) {
-    let name_style = if matches!(app.state, AppState::EnteringBackupName) {
-        Style::default().fg(ACCENT_COLOR)
-    } else if app.create_backup_flow.config.is_some() {
-        Style::default().fg(SUCCESS_COLOR)
-    } else {
-        Style::default().fg(BORDER_COLOR)
-    };
-
-    let name_content = if let Some(config) = &app.create_backup_flow.config {
-        format!("✓ {}", config.name)
-    } else if matches!(app.state, AppState::EnteringBackupName) {
-        "→ Press Enter to name backup...".to_string()
-    } else {
-        "Pending...".to_string()
-    };
-
-    f.render_widget(
-        Paragraph::new(name_content)
-            .block(
-                Block::default()
-                    .title("Backup Name")
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
-                    .style(name_style),
-            )
-            .alignment(Alignment::Center)
-            .wrap(Wrap { trim: true }),
-        area,
-    );
+    let hint = matches!(app.state, AppState::EnteringBackupName)
+        .then_some("→ Press Enter to name backup...");
+    let name_value = app.create_backup_flow.config.as_ref().map(|c| c.name.as_str());
+    render_step_box(f, area, "Backup Name", name_value, hint);
 }
 
 fn render_backup_status(f: &mut Frame, area: Rect, app: &mut App) {
@@ -617,46 +535,59 @@ fn render_two_section_layout(f: &mut Frame, area: Rect, app: &mut App) {
     render_target_section(f, main_chunks[1], app);
 }
 
-fn render_source_section(f: &mut Frame, area: Rect, app: &mut App) {
-    let source_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(8), // Project
-            Constraint::Length(8), // Instance
-            Constraint::Min(0),    // Backup
-        ])
-        .split(area);
-
-    // Source Project
-    let project_style = if matches!(app.state, AppState::SelectingSourceProject) {
+fn render_step_box(f: &mut Frame, area: Rect, title: &str, value: Option<&str>, active_hint: Option<&str>) {
+    let style = if active_hint.is_some() && value.is_none() {
         Style::default().fg(ACCENT_COLOR)
-    } else if app.restore_flow.source_project.is_some() {
+    } else if value.is_some() {
         Style::default().fg(SUCCESS_COLOR)
     } else {
         Style::default().fg(BORDER_COLOR)
     };
-
-    let project_content = if let Some(project) = &app.restore_flow.source_project {
-        format!("✓ {}", project)
-    } else if matches!(app.state, AppState::SelectingSourceProject) {
-        "→ Press Enter to select...".to_string()
+    let content = if let Some(v) = value {
+        format!("✓ {}", v)
+    } else if let Some(hint) = active_hint {
+        hint.to_string()
     } else {
         "Pending...".to_string()
     };
-
     f.render_widget(
-        Paragraph::new(project_content)
+        Paragraph::new(content)
             .block(
                 Block::default()
-                    .title("Source Project")
+                    .title(title)
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
-                    .style(project_style),
+                    .style(style),
             )
             .alignment(Alignment::Center)
             .wrap(Wrap { trim: true }),
-        source_chunks[0],
+        area,
     );
+}
+
+fn render_source_section(f: &mut Frame, area: Rect, app: &mut App) {
+    let instance_is_list = matches!(app.state, AppState::SelectingSourceInstance)
+        && !app.restore_flow.instances.is_empty()
+        && app.restore_flow.source_instance.is_none();
+    let backup_is_list = matches!(app.state, AppState::SelectingBackup)
+        && !app.restore_flow.backups.is_empty()
+        && app.restore_flow.selected_backup.is_none();
+    let constraints: &[Constraint] = if instance_is_list {
+        &[Constraint::Length(3), Constraint::Min(0), Constraint::Length(3)]
+    } else if backup_is_list {
+        &[Constraint::Length(3), Constraint::Length(3), Constraint::Min(0)]
+    } else {
+        &[Constraint::Length(3), Constraint::Length(3), Constraint::Length(3)]
+    };
+    let source_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(constraints)
+        .split(area);
+
+    // Source Project
+    let proj_hint = matches!(app.state, AppState::SelectingSourceProject)
+        .then_some("→ Press Enter to select...");
+    render_step_box(f, source_chunks[0], "Source Project", app.restore_flow.source_project.as_deref(), proj_hint);
 
     // Source Instance
     if matches!(app.state, AppState::SelectingSourceInstance)
@@ -665,43 +596,12 @@ fn render_source_section(f: &mut Frame, area: Rect, app: &mut App) {
     {
         render_instance_list(f, source_chunks[1], app, "Source Instance");
     } else {
-        let instance_style = if matches!(app.state, AppState::SelectingSourceInstance)
-            && app.restore_flow.source_instance.is_none()
-        {
-            Style::default().fg(ACCENT_COLOR)
-        } else if app.restore_flow.source_instance.is_some() {
-            Style::default().fg(SUCCESS_COLOR)
-        } else {
-            Style::default().fg(BORDER_COLOR)
-        };
-
-        let instance_content = if let Some(instance) = &app.restore_flow.source_instance {
-            format!("✓ {}", instance)
-        } else if matches!(app.state, AppState::SelectingSourceInstance) {
-            if app.loading {
-                "→ Loading instances...".to_string()
-            } else if app.restore_flow.instances.is_empty() {
-                "→ No instances found".to_string()
-            } else {
-                "→ Select instance...".to_string()
-            }
-        } else {
-            "Pending...".to_string()
-        };
-
-        f.render_widget(
-            Paragraph::new(instance_content)
-                .block(
-                    Block::default()
-                        .title("Source Instance")
-                        .borders(Borders::ALL)
-                        .border_type(BorderType::Rounded)
-                        .style(instance_style),
-                )
-                .alignment(Alignment::Center)
-                .wrap(Wrap { trim: true }),
-            source_chunks[1],
-        );
+        let inst_hint = matches!(app.state, AppState::SelectingSourceInstance).then(|| {
+            if app.loading { "→ Loading instances..." }
+            else if app.restore_flow.instances.is_empty() { "→ No instances found" }
+            else { "→ Select instance..." }
+        });
+        render_step_box(f, source_chunks[1], "Source Instance", app.restore_flow.source_instance.as_deref(), inst_hint);
     }
 
     // Source Backup
@@ -711,43 +611,12 @@ fn render_source_section(f: &mut Frame, area: Rect, app: &mut App) {
     {
         render_backup_list(f, source_chunks[2], app);
     } else {
-        let backup_style = if matches!(app.state, AppState::SelectingBackup)
-            && app.restore_flow.selected_backup.is_none()
-        {
-            Style::default().fg(ACCENT_COLOR)
-        } else if app.restore_flow.selected_backup.is_some() {
-            Style::default().fg(SUCCESS_COLOR)
-        } else {
-            Style::default().fg(BORDER_COLOR)
-        };
-
-        let backup_content = if let Some(backup) = &app.restore_flow.selected_backup {
-            format!("✓ {}", backup)
-        } else if matches!(app.state, AppState::SelectingBackup) {
-            if app.loading {
-                "→ Loading backups...".to_string()
-            } else if app.restore_flow.backups.is_empty() {
-                "→ No backups found".to_string()
-            } else {
-                format!("→ Choose from {} backups", app.restore_flow.backups.len())
-            }
-        } else {
-            "Pending...".to_string()
-        };
-
-        f.render_widget(
-            Paragraph::new(backup_content)
-                .block(
-                    Block::default()
-                        .title("Source Backup")
-                        .borders(Borders::ALL)
-                        .border_type(BorderType::Rounded)
-                        .style(backup_style),
-                )
-                .alignment(Alignment::Center)
-                .wrap(Wrap { trim: true }),
-            source_chunks[2],
-        );
+        let backup_hint = matches!(app.state, AppState::SelectingBackup).then(|| {
+            if app.loading { "→ Loading backups...".to_string() }
+            else if app.restore_flow.backups.is_empty() { "→ No backups found".to_string() }
+            else { format!("→ Choose from {} backups", app.restore_flow.backups.len()) }
+        });
+        render_step_box(f, source_chunks[2], "Source Backup", app.restore_flow.selected_backup.as_deref(), backup_hint.as_deref());
     }
 }
 
@@ -876,45 +745,23 @@ fn render_backup_list(f: &mut Frame, area: Rect, app: &mut App) {
 }
 
 fn render_target_section(f: &mut Frame, area: Rect, app: &mut App) {
+    let instance_is_list = matches!(app.state, AppState::SelectingTargetInstance)
+        && !app.restore_flow.instances.is_empty()
+        && app.restore_flow.target_instance.is_none();
+    let constraints: &[Constraint] = if instance_is_list {
+        &[Constraint::Length(3), Constraint::Min(0), Constraint::Length(5)]
+    } else {
+        &[Constraint::Length(3), Constraint::Length(3), Constraint::Min(0)]
+    };
     let target_chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(8), // Project
-            Constraint::Length(8), // Instance
-            Constraint::Min(0),    // Status/Info
-        ])
+        .constraints(constraints)
         .split(area);
 
     // Target Project
-    let project_style = if matches!(app.state, AppState::SelectingTargetProject) {
-        Style::default().fg(ACCENT_COLOR)
-    } else if app.restore_flow.target_project.is_some() {
-        Style::default().fg(SUCCESS_COLOR)
-    } else {
-        Style::default().fg(BORDER_COLOR)
-    };
-
-    let project_content = if let Some(project) = &app.restore_flow.target_project {
-        format!("✓ {}", project)
-    } else if matches!(app.state, AppState::SelectingTargetProject) {
-        "→ Press Enter to select...".to_string()
-    } else {
-        "Pending...".to_string()
-    };
-
-    f.render_widget(
-        Paragraph::new(project_content)
-            .block(
-                Block::default()
-                    .title("Target Project")
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
-                    .style(project_style),
-            )
-            .alignment(Alignment::Center)
-            .wrap(Wrap { trim: true }),
-        target_chunks[0],
-    );
+    let proj_hint = matches!(app.state, AppState::SelectingTargetProject)
+        .then_some("→ Press Enter to select...");
+    render_step_box(f, target_chunks[0], "Target Project", app.restore_flow.target_project.as_deref(), proj_hint);
 
     // Target Instance
     if matches!(app.state, AppState::SelectingTargetInstance)
@@ -923,43 +770,12 @@ fn render_target_section(f: &mut Frame, area: Rect, app: &mut App) {
     {
         render_instance_list(f, target_chunks[1], app, "Target Instance");
     } else {
-        let instance_style = if matches!(app.state, AppState::SelectingTargetInstance)
-            && app.restore_flow.target_instance.is_none()
-        {
-            Style::default().fg(ACCENT_COLOR)
-        } else if app.restore_flow.target_instance.is_some() {
-            Style::default().fg(SUCCESS_COLOR)
-        } else {
-            Style::default().fg(BORDER_COLOR)
-        };
-
-        let instance_content = if let Some(instance) = &app.restore_flow.target_instance {
-            format!("✓ {}", instance)
-        } else if matches!(app.state, AppState::SelectingTargetInstance) {
-            if app.loading {
-                "→ Loading instances...".to_string()
-            } else if app.restore_flow.instances.is_empty() {
-                "→ No instances found".to_string()
-            } else {
-                "→ Select instance...".to_string()
-            }
-        } else {
-            "Pending...".to_string()
-        };
-
-        f.render_widget(
-            Paragraph::new(instance_content)
-                .block(
-                    Block::default()
-                        .title("Target Instance")
-                        .borders(Borders::ALL)
-                        .border_type(BorderType::Rounded)
-                        .style(instance_style),
-                )
-                .alignment(Alignment::Center)
-                .wrap(Wrap { trim: true }),
-            target_chunks[1],
-        );
+        let inst_hint = matches!(app.state, AppState::SelectingTargetInstance).then(|| {
+            if app.loading { "→ Loading instances..." }
+            else if app.restore_flow.instances.is_empty() { "→ No instances found" }
+            else { "→ Select instance..." }
+        });
+        render_step_box(f, target_chunks[1], "Target Instance", app.restore_flow.target_instance.as_deref(), inst_hint);
     }
 
     // Status/Info section - Now shows restore progress with actual status
@@ -1010,54 +826,6 @@ fn render_target_section(f: &mut Frame, area: Rect, app: &mut App) {
             .wrap(Wrap { trim: true }),
         target_chunks[2],
     );
-}
-
-fn render_welcome(f: &mut Frame, area: Rect) {
-    let block = Block::default()
-        .title(" Welcome ")
-        .title_alignment(Alignment::Center)
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .style(Style::default().fg(BASE_FG).bg(BASE_BG));
-
-    let welcome_text = vec![
-        Line::from(""),
-        Line::from(Span::styled(
-            "GCP SQL Backup Restore Tool",
-            Style::default()
-                .fg(ACCENT_COLOR)
-                .add_modifier(Modifier::BOLD),
-        )),
-        Line::from(""),
-        Line::from("This tool helps you restore SQL backups between GCP projects."),
-        Line::from(""),
-        Line::from("Steps:"),
-        Line::from("  1. Select source project and instance"),
-        Line::from("  2. Choose a backup to restore"),
-        Line::from("  3. Select target project and instance"),
-        Line::from("  4. Confirm and execute restoration"),
-        Line::from("  5. Monitor progress in real-time"),
-        Line::from(""),
-        Line::from("Navigation:"),
-        Line::from("  • Use ESC to go back to previous steps"),
-        Line::from("  • Use Q to quit the application"),
-        Line::from(""),
-        Line::from(Span::styled(
-            "Press 'p' to start with project selection",
-            Style::default().fg(WARNING_COLOR),
-        )),
-        Line::from(Span::styled(
-            "Press 'h' for detailed help",
-            Style::default().fg(BORDER_COLOR),
-        )),
-    ];
-
-    let paragraph = Paragraph::new(welcome_text)
-        .block(block)
-        .alignment(Alignment::Center)
-        .wrap(Wrap { trim: true });
-
-    f.render_widget(paragraph, area);
 }
 
 fn render_loading(f: &mut Frame, area: Rect, message: &str) {

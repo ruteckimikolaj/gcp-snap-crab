@@ -1,11 +1,13 @@
+mod backup;
+mod restore;
+
 use anyhow::Result;
 
 use crate::gcp::GcpClientTrait;
 use crate::state::create_backup_flow::CreateBackupFlow;
 use crate::state::restore_flow::RestoreFlow;
 use crate::types::{
-    AppState, Backup, CreateBackupConfig, InputMode, OperationMode, RestoreConfig,
-    RestoreRequest, RestoreBackupContext, SqlInstance,
+    AppState, Backup, InputMode, OperationMode, SqlInstance,
 };
 use crate::validation::{validate_backup_name, validate_instance_name, validate_project_id};
 
@@ -53,59 +55,6 @@ impl App {
             create_backup_flow: CreateBackupFlow::new(),
             error: None,
             filter_query: String::new(),
-        }
-    }
-
-    pub async fn select_project(&mut self, project: String) -> Result<()> {
-        if !self.remembered_projects.contains(&project) {
-            self.remembered_projects.push(project.clone());
-        }
-        self.filter_query.clear();
-        match self.state {
-            AppState::SelectingSourceProject => {
-                self.restore_flow.source_project = Some(project.clone());
-                self.state = AppState::SelectingSourceInstance;
-            }
-            AppState::SelectingProjectForBackup => {
-                self.create_backup_flow.project = Some(project.clone());
-                self.state = AppState::SelectingInstanceForBackup;
-            }
-            AppState::SelectingTargetProject => {
-                self.restore_flow.target_project = Some(project.clone());
-                self.state = AppState::SelectingTargetInstance;
-            }
-            _ => return Ok(()),
-        }
-        self.load_instances(&project).await?;
-        Ok(())
-    }
-
-    pub fn filtered_instances(&self) -> Vec<&SqlInstance> {
-        let instances = match self.operation_mode {
-            Some(OperationMode::Restore) => &self.restore_flow.instances,
-            Some(OperationMode::CreateBackup) => &self.create_backup_flow.instances,
-            None => &self.restore_flow.instances,
-        };
-        if self.filter_query.is_empty() {
-            instances.iter().collect()
-        } else {
-            let q = self.filter_query.to_lowercase();
-            instances.iter().filter(|i| i.name.to_lowercase().contains(&q)).collect()
-        }
-    }
-
-    pub fn filtered_backups(&self) -> Vec<&Backup> {
-        if self.filter_query.is_empty() {
-            self.restore_flow.backups.iter().collect()
-        } else {
-            let q = self.filter_query.to_lowercase();
-            self.restore_flow.backups.iter().filter(|b| {
-                b.id.to_lowercase().contains(&q)
-                    || b.start_time
-                        .map(|t| t.format("%Y-%m-%d").to_string())
-                        .unwrap_or_default()
-                        .contains(&q)
-            }).collect()
         }
     }
 
@@ -184,125 +133,57 @@ impl App {
         Ok(())
     }
 
-    pub async fn perform_restore(&mut self) -> Result<()> {
-        if let Some(config) = self.restore_flow.config.clone() {
-            self.loading = true;
-            self.state = AppState::PerformingRestore;
-
-            let restore_request = RestoreRequest {
-                restore_backup_context: RestoreBackupContext {
-                    backup_run_id: config.backup_id.clone(),
-                    project: config.source_project.clone(),
-                    instance_id: config.source_instance.clone(),
-                },
-            };
-
-            if self.dry_run_mode {
-                let mock_operation_id =
-                    format!("dry-run-operation-{}", chrono::Utc::now().timestamp());
-                self.restore_flow.operation_id = Some(mock_operation_id);
-                self.restore_flow.status = Some("DONE".to_string());
-                self.loading = false;
+    pub async fn select_project(&mut self, project: String) -> Result<()> {
+        if !self.remembered_projects.contains(&project) {
+            self.remembered_projects.push(project.clone());
+        }
+        self.filter_query.clear();
+        match self.state {
+            AppState::SelectingSourceProject => {
+                self.restore_flow.source_project = Some(project.clone());
+                self.state = AppState::SelectingSourceInstance;
+            }
+            AppState::SelectingProjectForBackup => {
+                self.create_backup_flow.project = Some(project.clone());
+                self.state = AppState::SelectingInstanceForBackup;
+            }
+            AppState::SelectingTargetProject => {
+                self.restore_flow.target_project = Some(project.clone());
                 self.state = AppState::SelectingTargetInstance;
-            } else {
-                match self
-                    .gcp_client
-                    .restore_backup(
-                        &restore_request,
-                        &config.target_project,
-                        &config.target_instance,
-                    )
-                    .await
-                {
-                    Ok(operation_id) => {
-                        self.restore_flow.operation_id = Some(operation_id.clone());
-                        self.restore_flow.status = Some("RUNNING".to_string());
-                        self.loading = false;
-                        self.state = AppState::SelectingTargetInstance;
-                    }
-                    Err(e) => {
-                        self.loading = false;
-                        self.error = Some(format!("Restore failed: {}. Press ESC to clear.", e));
-                        self.state = AppState::ConfirmRestore;
-                    }
-                }
             }
+            _ => return Ok(()),
         }
+        self.load_instances(&project).await?;
         Ok(())
     }
 
-    pub async fn perform_create_backup(&mut self) -> Result<()> {
-        if let Some(config) = &self.create_backup_flow.config {
-            self.loading = true;
-            self.state = AppState::PerformingCreateBackup;
-
-            if self.dry_run_mode {
-                let mock_operation_id =
-                    format!("dry-run-backup-op-{}", chrono::Utc::now().timestamp());
-                self.create_backup_flow.operation_id = Some(mock_operation_id);
-                self.create_backup_flow.status = Some("DONE".to_string());
-                self.loading = false;
-                self.state = AppState::PerformingCreateBackup;
-            } else {
-                match self.gcp_client.create_backup(config).await {
-                    Ok(operation_id) => {
-                        self.create_backup_flow.operation_id = Some(operation_id);
-                        self.create_backup_flow.status = Some("RUNNING".to_string());
-                        self.loading = false;
-                        self.state = AppState::PerformingCreateBackup;
-                    }
-                    Err(e) => {
-                        self.loading = false;
-                        self.error =
-                            Some(format!("Create backup failed: {}. Press ESC to clear.", e));
-                        self.state = AppState::ConfirmCreateBackup;
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
-    async fn poll_operation(&mut self, project: &str, operation_id: &str) -> Option<String> {
-        match self.gcp_client.get_operation_status(project, operation_id).await {
-            Ok(op) => Some(op.status),
-            Err(e) => {
-                self.error = Some(format!("Failed to check operation status: {}", e));
-                None
-            }
+    pub fn filtered_instances(&self) -> Vec<&SqlInstance> {
+        let instances = match self.operation_mode {
+            Some(OperationMode::Restore) => &self.restore_flow.instances,
+            Some(OperationMode::CreateBackup) => &self.create_backup_flow.instances,
+            None => &self.restore_flow.instances,
+        };
+        if self.filter_query.is_empty() {
+            instances.iter().collect()
+        } else {
+            let q = self.filter_query.to_lowercase();
+            instances.iter().filter(|i| i.name.to_lowercase().contains(&q)).collect()
         }
     }
 
-    pub async fn check_restore_status(&mut self) -> Result<()> {
-        if let (Some(operation_id), Some(config)) = (
-            &self.restore_flow.operation_id.clone(),
-            &self.restore_flow.config.clone(),
-        ) {
-            if self.dry_run_mode {
-                self.restore_flow.status = Some("DONE".to_string());
-                return Ok(());
-            }
-            if let Some(status) = self.poll_operation(&config.target_project, operation_id).await {
-                self.restore_flow.status = Some(status);
-            }
+    pub fn filtered_backups(&self) -> Vec<&Backup> {
+        if self.filter_query.is_empty() {
+            self.restore_flow.backups.iter().collect()
+        } else {
+            let q = self.filter_query.to_lowercase();
+            self.restore_flow.backups.iter().filter(|b| {
+                b.id.to_lowercase().contains(&q)
+                    || b.start_time
+                        .map(|t| t.format("%Y-%m-%d").to_string())
+                        .unwrap_or_default()
+                        .contains(&q)
+            }).collect()
         }
-        Ok(())
-    }
-
-    pub async fn check_backup_status(&mut self) -> Result<()> {
-        if let (Some(operation_id), Some(config)) = (
-            &self.create_backup_flow.operation_id.clone(),
-            &self.create_backup_flow.config.clone(),
-        ) {
-            if self.dry_run_mode {
-                self.create_backup_flow.status = Some("DONE".to_string());
-                return Ok(());
-            }
-            if let Some(status) = self.poll_operation(&config.project, operation_id).await {
-                self.create_backup_flow.status = Some(status);
-            }
-        }
-        Ok(())
     }
 
     pub fn move_selection_up(&mut self) {
@@ -445,44 +326,6 @@ impl App {
         Ok(())
     }
 
-    pub fn create_restore_config(&mut self) {
-        if let (
-            Some(backup_id),
-            Some(source_project),
-            Some(source_instance),
-            Some(target_project),
-            Some(target_instance),
-        ) = (
-            self.restore_flow.selected_backup.as_ref(),
-            self.restore_flow.source_project.as_ref(),
-            self.restore_flow.source_instance.as_ref(),
-            self.restore_flow.target_project.as_ref(),
-            self.restore_flow.target_instance.as_ref(),
-        ) {
-            self.restore_flow.config = Some(RestoreConfig {
-                backup_id: backup_id.clone(),
-                source_project: source_project.clone(),
-                source_instance: source_instance.clone(),
-                target_project: target_project.clone(),
-                target_instance: target_instance.clone(),
-            });
-        }
-    }
-
-    pub fn create_backup_config(&mut self, backup_name: String) {
-        if let (Some(project), Some(instance)) = (
-            self.create_backup_flow.project.as_ref(),
-            self.create_backup_flow.instance.as_ref(),
-        ) {
-            self.create_backup_flow.config = Some(CreateBackupConfig {
-                project: project.clone(),
-                instance: instance.clone(),
-                name: backup_name.clone(),
-                description: backup_name,
-            });
-        }
-    }
-
     pub fn toggle_help(&mut self) {
         self.show_help = !self.show_help;
     }
@@ -492,6 +335,12 @@ impl App {
         self.manual_input_type = input_type.to_string();
         self.manual_input_buffer.clear();
         self.input_mode = InputMode::Editing;
+    }
+
+    pub fn cancel_manual_input(&mut self) {
+        self.manual_input_active = false;
+        self.manual_input_buffer.clear();
+        self.input_mode = InputMode::Normal;
     }
 
     pub async fn finish_manual_input(&mut self) -> Result<()> {
@@ -515,7 +364,7 @@ impl App {
                         }
                         Some(OperationMode::CreateBackup) => {
                             self.create_backup_flow.project = Some(input_value.clone());
-                            self.state = AppState::SelectingInstanceForBackup
+                            self.state = AppState::SelectingInstanceForBackup;
                         }
                         None => {}
                     }
@@ -592,9 +441,13 @@ impl App {
         Ok(())
     }
 
-    pub fn cancel_manual_input(&mut self) {
-        self.manual_input_active = false;
-        self.manual_input_buffer.clear();
-        self.input_mode = InputMode::Normal;
+    pub(self) async fn poll_operation(&mut self, project: &str, operation_id: &str) -> Option<String> {
+        match self.gcp_client.get_operation_status(project, operation_id).await {
+            Ok(op) => Some(op.status),
+            Err(e) => {
+                self.error = Some(format!("Failed to check operation status: {}", e));
+                None
+            }
+        }
     }
 }
